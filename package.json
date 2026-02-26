@@ -1,0 +1,9 @@
+{
+  "name": "tradfi-btc-yield-mvp",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "mobile",
+    "types"
+  ]
+}
