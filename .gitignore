@@ -1,0 +1,22 @@
+# Environment — never commit these
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+
+# TypeScript
+*.tsbuildinfo
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
