@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS txs (
   status TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stark_keys (
+  privy_user_id TEXT PRIMARY KEY,
+  private_key   TEXT NOT NULL,
+  public_key    TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
 `);
 
 export const queries = {
@@ -70,5 +76,9 @@ export const queries = {
   upsertTx: db.prepare(
     "INSERT INTO txs (hash, status, created_at) VALUES (@hash, @status, @created_at) ON CONFLICT(hash) DO UPDATE SET status=excluded.status"
   ),
-  getTx: db.prepare("SELECT * FROM txs WHERE hash = ?")
+  getTx: db.prepare("SELECT * FROM txs WHERE hash = ?"),
+  upsertStarkKey: db.prepare(
+    "INSERT INTO stark_keys (privy_user_id, private_key, public_key, created_at) VALUES (@privy_user_id, @private_key, @public_key, @created_at) ON CONFLICT(privy_user_id) DO NOTHING"
+  ),
+  getStarkKey: db.prepare("SELECT * FROM stark_keys WHERE privy_user_id = ?"),
 };

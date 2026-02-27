@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   TextInput,
   KeyboardAvoidingView,
+  ScrollView,
   Platform,
 } from "react-native";
 import { useLoginWithEmail } from "@privy-io/expo";
@@ -23,24 +24,38 @@ export const LoginScreen = () => {
 
   const codeSent = emailState.status === "awaiting-code-input";
   const emailBusy = emailState.status === "sending-code" || emailState.status === "submitting-code";
+  const emailError = emailState.status === "error" ? emailState.error?.message ?? "Something went wrong" : null;
 
   const handleSendCode = async () => {
     if (!email.trim()) return;
-    await sendCode({ email: email.trim() });
+    try {
+      await sendCode({ email: email.trim() });
+    } catch (e: any) {
+      console.error("[Login] sendCode error:", e);
+    }
   };
 
   const handleVerifyCode = async () => {
     if (!code.trim()) return;
-    await loginWithCode({ code: code.trim() });
+    try {
+      await loginWithCode({ code: code.trim() });
+    } catch (e: any) {
+      console.error("[Login] loginWithCode error:", e);
+    }
   };
 
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
         style={styles.kav}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
       >
-        <View style={styles.container}>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           {/* ── Brand ─────────────────────────────────────────────── */}
           <View style={styles.brand}>
             <View style={styles.logoCircle}>
@@ -147,9 +162,12 @@ export const LoginScreen = () => {
               </>
             )}
 
+            {emailError && (
+              <Text style={styles.errorText}>{emailError}</Text>
+            )}
             <Text style={styles.hint}>No wallet setup required.</Text>
           </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -159,7 +177,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#0B1220" },
   kav: { flex: 1 },
   container: {
-    flex: 1,
+    flexGrow: 1,
     paddingHorizontal: 28,
     paddingTop: 48,
     paddingBottom: 36,
@@ -234,4 +252,5 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: "#0B1220", fontWeight: "800", fontSize: 15 },
 
   hint: { color: "#4A5568", fontSize: 12, textAlign: "center", marginTop: 16 },
+  errorText: { color: "#FF6B6B", fontSize: 13, textAlign: "center", marginTop: 8 },
 });

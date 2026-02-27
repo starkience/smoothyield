@@ -3,7 +3,7 @@ import { View, ActivityIndicator } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
-import { PrivyProvider } from "@privy-io/expo";
+import { PrivyProvider, usePrivy } from "@privy-io/expo";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import { LoginScreen } from "./src/screens/LoginScreen";
 import { MarketsScreen } from "./src/screens/MarketsScreen";
@@ -52,8 +52,9 @@ function MainTabs() {
 
 function RootNavigator() {
   const { sessionId, loading } = useAuth();
+  const { user, isReady } = usePrivy();
 
-  if (loading) {
+  if (loading || !isReady) {
     return (
       <View style={{ flex: 1, backgroundColor: "#0B1220", justifyContent: "center", alignItems: "center" }}>
         <ActivityIndicator color="#1EC98A" size="large" />
@@ -61,7 +62,8 @@ function RootNavigator() {
     );
   }
 
-  if (!sessionId) return <LoginScreen />;
+  // Gate on Privy user — session bootstrap is best-effort for backend features
+  if (!user) return <LoginScreen />;
 
   return <MainTabs />;
 }
@@ -70,7 +72,7 @@ export default function App() {
   const appId = process.env.EXPO_PUBLIC_PRIVY_APP_ID || "";
 
   return (
-    <PrivyProvider appId={appId}>
+    <PrivyProvider appId={appId} clientId="client-WY6Wi7ufTkY2bWNZNJpg3K73eNJwg6Aq7RVZAAkLdA4F7">
       <AuthProvider>
         <RootNavigator />
       </AuthProvider>

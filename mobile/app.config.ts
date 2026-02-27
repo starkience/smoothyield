@@ -9,9 +9,12 @@ const config: ExpoConfig = {
   orientation: "portrait",
   userInterfaceStyle: "light",
   ios: {
-    supportsTablet: true
+    supportsTablet: true,
+    bundleIdentifier: "com.smoothyield.app"
   },
-  android: {},
+  android: {
+    package: "com.smoothyield.app"
+  },
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL || "http://localhost:3001",
     privyAppId: process.env.EXPO_PUBLIC_PRIVY_APP_ID || "",

@@ -186,7 +186,7 @@ export const ProfileScreen = () => {
               <Text style={styles.logoutText}>Log out</Text>
             </TouchableOpacity>
           </>
-        )}
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

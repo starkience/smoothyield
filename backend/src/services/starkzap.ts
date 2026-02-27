@@ -1,5 +1,6 @@
 import { config } from "../config";
-import { RpcProvider } from "starknet";
+import { RpcProvider, ec, stark, num } from "starknet";
+import { queries } from "../db";
 
 // ─── Token addresses (Starknet mainnet) ──────────────────────────────────────
 // Sourced from starkzap/dist/src/erc20/token/presets.js
@@ -41,33 +42,47 @@ export const getTokenAddresses = () => {
   return { usdc, lbtc };
 };
 
-export const onboardPrivyWallet = async (privyToken: string) => {
-  if (config.devMode && (!privyToken || privyToken === "dev")) {
-    const mockHash = `0xmock${Date.now().toString(16)}`;
-    return {
-      address: "0xdev",
-      balanceOf: async () => "0",
-      tx: () => ({
-        add: () => ({
-          send: async () => ({ transaction_hash: mockHash }),
-        }),
-      }),
-    };
-  }
+// ─── Per-user Starknet key management ────────────────────────────────────────
 
+function getOrCreateStarkKey(privyUserId: string): { privateKey: string; publicKey: string } {
+  const existing = queries.getStarkKey.get(privyUserId) as any;
+  if (existing) return { privateKey: existing.private_key, publicKey: existing.public_key };
+
+  // Generate a new STARK key pair for this user
+  const privateKey = stark.randomAddress();
+  const pubKeyBytes = ec.starkCurve.getPublicKey(privateKey, true);
+  const publicKey = "0x" + num.toHex(BigInt("0x" + Buffer.from(pubKeyBytes).slice(1, 33).toString("hex"))).slice(2).padStart(64, "0");
+
+  queries.upsertStarkKey.run({
+    privy_user_id: privyUserId,
+    private_key: privateKey,
+    public_key: publicKey,
+    created_at: new Date().toISOString(),
+  });
+
+  return { privateKey, publicKey };
+}
+
+export const onboardPrivyWallet = async (privyUserId: string, _privyToken?: string) => {
   const sdk = await getSdk();
   if (!sdk?.onboard) throw new Error("Starkzap SDK onboard unavailable");
+
+  const { privateKey, publicKey } = getOrCreateStarkKey(privyUserId);
 
   const result = await sdk.onboard({
     strategy: "privy",
     privy: {
-      resolve: async () => {
-        // In a full integration, resolve wallet ID + public key from Privy server SDK.
-        // For now this path only runs with DEV_MODE=false when we have real credentials.
-        throw new Error(
-          "Privy wallet resolution not yet wired — set DEV_MODE=true or implement privy.resolve()"
-        );
-      },
+      resolve: async () => ({
+        walletId: privyUserId,
+        publicKey,
+        rawSign: async (_walletId: string, messageHash: string) => {
+          const hash = messageHash.startsWith("0x") ? messageHash : "0x" + messageHash;
+          const sig = ec.starkCurve.sign(hash, privateKey);
+          const r = num.toHex(sig.r).slice(2).padStart(64, "0");
+          const s = num.toHex(sig.s).slice(2).padStart(64, "0");
+          return "0x" + r + s;
+        },
+      }),
     },
   });
   return result?.wallet ?? result;

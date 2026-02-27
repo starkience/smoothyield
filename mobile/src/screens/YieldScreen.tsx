@@ -172,7 +172,7 @@ export const YieldScreen: React.FC<Props> = ({ embedded = false }) => {
             </View>
           )}
         </>
-      )}
+      ) : null}
 
       {error && <Text style={styles.error}>{error}</Text>}
     </ScrollView>

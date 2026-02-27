@@ -15,6 +15,9 @@ config.resolver.nodeModulesPaths = [
   path.resolve(monorepoRoot, "node_modules"),
 ];
 
+// Prefer browser-compatible builds over Node.js builds.
+config.resolver.unstable_conditionNames = ["browser", "require", "default"];
+
 // Exclude backend, types, and git from the bundle.
 config.resolver.blockList = [
   /smoothyield\/backend\/.*/,

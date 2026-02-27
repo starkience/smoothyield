@@ -47,7 +47,7 @@ apiRouter.post("/auth/session", async (req, res) => {
 
 apiRouter.post("/wallet/init", requireSession, async (req, res) => {
   try {
-    const wallet = await onboardPrivyWallet(req.session!.privy_token);
+    const wallet = await onboardPrivyWallet(req.session!.privy_user_id, req.session!.privy_token);
     const walletAddress =
       wallet?.address || wallet?.accountAddress || wallet?.account?.address;
 
@@ -90,7 +90,7 @@ apiRouter.get("/portfolio", requireSession, async (req, res) => {
   try {
     const walletRow = queries.getWallet.get(req.session!.privy_user_id) as any;
     if (walletRow) {
-      const wallet = await onboardPrivyWallet(req.session!.privy_token);
+      const wallet = await onboardPrivyWallet(req.session!.privy_user_id, req.session!.privy_token);
       const balances = await getBalances(wallet);
       usdcBalance = balances.usdcBalance;
       lbtcBalance = balances.lbtcBalance;
@@ -171,7 +171,7 @@ apiRouter.post("/yield/convert", requireSession, async (req, res) => {
   }
 
   try {
-    const wallet = await onboardPrivyWallet(req.session!.privy_token);
+    const wallet = await onboardPrivyWallet(req.session!.privy_user_id, req.session!.privy_token);
     const walletAddress =
       wallet?.address || wallet?.accountAddress || wallet?.account?.address;
     if (!walletAddress) {
@@ -214,7 +214,7 @@ apiRouter.post("/yield/stake", requireSession, async (req, res) => {
   if (!body.success) return res.status(400).json({ error: "Invalid body" });
 
   try {
-    const wallet = await onboardPrivyWallet(req.session!.privy_token);
+    const wallet = await onboardPrivyWallet(req.session!.privy_user_id, req.session!.privy_token);
     const amount = body.data.amountLbtc || "1000000";
     const result = await stakeLbtc(wallet, amount);
 
