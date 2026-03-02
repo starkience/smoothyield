@@ -10,7 +10,8 @@
 import { PrivyClient } from "@privy-io/node";
 import { config } from "../config";
 import { normalizeStarknetAddress } from "../utils/address";
-import { normalizePrivyToken, decodeJwtClaimsForLog } from "../utils/privyToken";
+import { normalizePrivyToken, decodeJwtClaimsForLog, tokenFingerprint } from "../utils/privyToken";
+import { config } from "../config";
 
 const SIGN_TOKEN_TTL_MS = 2 * 60 * 1000; // 2 min
 
@@ -102,6 +103,19 @@ export async function rawSign(
   if (!token) {
     throw new Error("No Privy token available for wallet sign. Starknet requires user JWT (key quorum not supported).");
   }
+
+  // Defensive: re-verify the exact string we're about to send (rules out intermediary corruption).
+  let reVerifyOk = false;
+  if (config.privyJwksUrl) {
+    try {
+      const { verifyPrivyAccessTokenWithJwks } = await import("../utils/privyJwks");
+      await verifyPrivyAccessTokenWithJwks(token);
+      reVerifyOk = true;
+    } catch (e: any) {
+      console.warn("[wallet/sign] re-verify with JWKS failed before rawSign:", e?.message);
+    }
+  }
+  console.log("[wallet/sign] token sent to Privy:", tokenFingerprint(token), reVerifyOk ? "(re-verified with JWKS)" : "");
 
   const privy = getPrivyClient();
   const result = await privy.wallets().rawSign(walletId, {

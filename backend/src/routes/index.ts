@@ -178,27 +178,41 @@ apiRouter.post("/wallet/init", requireSession, async (req, res) => {
 
 // POST /api/wallet/sign — called by Starkzap (or our backend) to sign with Privy.
 // Starkzap doc: "Your backend endpoint receives { walletId, hash } and must return { signature }."
-// Secured by query param key (only our backend knows it) when called from our server.
-apiRouter.post("/wallet/sign", (req, res) => {
+// Auth: (1) query key (backend-initiated) or (2) Authorization: Bearer <accessToken> (client-side integration).
+apiRouter.post("/wallet/sign", async (req, res) => {
   const key = req.query.key as string;
-  if (key !== config.internalSignKey) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  const bearerToken = req.headers.authorization?.replace(/^Bearer\s+/i, "")?.trim();
   const body = z
     .object({ walletId: z.string(), hash: z.string() })
     .safeParse(req.body);
-  if (!body.success) return res.status(400).json({ error: "Invalid body" });
+  if (!body.success) return res.status(400).json({ error: "walletId and hash required" });
 
-  // Wallet must exist in our DB (we don't tie to session; caller is our backend)
   const walletRow = queries.getWalletByPrivyWalletId.get(body.data.walletId) as any;
   if (!walletRow) {
     return res.status(403).json({ error: "Wallet not found" });
   }
 
-  const cachedToken = getSignTokenForWallet(body.data.walletId);
-  console.log("[wallet/sign] walletId:", body.data.walletId, "| token from cache:", cachedToken ? "yes" : "no");
+  let token: string | null = null;
+  if (key === config.internalSignKey) {
+    token = getSignTokenForWallet(body.data.walletId);
+    console.log("[wallet/sign] walletId:", body.data.walletId, "| auth: key | token from cache:", token ? "yes" : "no");
+  } else if (bearerToken) {
+    const normalized = normalizePrivyToken(bearerToken);
+    try {
+      const user = await verifyPrivyToken(normalized);
+      if (walletRow.privy_user_id !== user.id) {
+        return res.status(403).json({ error: "Wallet does not belong to this user" });
+      }
+      token = normalized;
+      console.log("[wallet/sign] walletId:", body.data.walletId, "| auth: Bearer (client-side)");
+    } catch (e: any) {
+      return res.status(401).json({ error: e?.message || "Invalid or expired token" });
+    }
+  } else {
+    return res.status(401).json({ error: "Unauthorized: provide ?key=... or Authorization: Bearer <accessToken>" });
+  }
 
-  rawSign(body.data.walletId, body.data.hash, cachedToken)
+  rawSign(body.data.walletId, body.data.hash, token)
     .then((signature) => res.json({ signature }))
     .catch((err: any) => {
       const msg = err?.message || "Sign failed";

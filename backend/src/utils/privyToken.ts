@@ -1,11 +1,22 @@
 /**
- * Normalize Privy JWT for API use: strip optional "Bearer " prefix and trim.
+ * Normalize Privy JWT for API use: strip any "Bearer " prefix(es) and trim.
  * Ensures we never pass "Bearer <token>" to Privy's wallets/authenticate.
+ * Idempotent: normalize(normalize(x)) === normalize(x).
  */
 export function normalizePrivyToken(token: string): string {
   if (!token || typeof token !== "string") return token;
-  const t = token.trim();
-  return t.startsWith("Bearer ") ? t.slice(7).trim() : t;
+  let t = token.trim();
+  while (t.startsWith("Bearer ")) t = t.slice(7).trim();
+  return t;
+}
+
+/**
+ * Safe fingerprint for logs (no secrets): length + first/last few chars.
+ * Use to confirm the same token is used at verify and at rawSign.
+ */
+export function tokenFingerprint(token: string): string {
+  if (!token || token.length < 20) return `len=${token?.length ?? 0}`;
+  return `len=${token.length} from=${token.slice(0, 15)}… to=…${token.slice(-8)}`;
 }
 
 /**
