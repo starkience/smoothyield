@@ -4,20 +4,21 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   ScrollView,
   Platform,
+  Linking,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
-import { FlipCard } from "../components/FlipCard";
+import { usePrivy } from "@privy-io/expo";
 import { useAuth } from "../context/AuthContext";
 import { createApi } from "../api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** "john.doe@gmail.com" → "John Doe" */
-const emailToName = (email?: string): string => {
-  if (!email) return "Guest";
+const emailToDisplayName = (email?: string | null): string => {
+  if (!email) return "Logged in user";
   const prefix = email.split("@")[0];
   return prefix
     .split(/[._\-+]/)
@@ -32,43 +33,116 @@ const nameToInitials = (name: string): string => {
   return name.slice(0, 2).toUpperCase();
 };
 
-/** "0x04abc…def9" → "0x04ab…f9" (truncated for display) */
-const truncateAddress = (addr: string): string => {
-  if (!addr || addr.length < 12) return addr;
-  return `${addr.slice(0, 8)}…${addr.slice(-6)}`;
+/** Truncate address for display: "0x04abc…def9" */
+const truncateAddress = (addr: string, head = 10, tail = 8): string => {
+  if (!addr || addr.length <= head + tail) return addr;
+  return `${addr.slice(0, head)}…${addr.slice(-tail)}`;
+};
+
+/** Normalize to 66-char form (0x + 64 hex digits) so Ready and other wallets accept it when sending funds. */
+const normalizeStarknetAddress = (address: string): string => {
+  if (!address || typeof address !== "string") return address;
+  const hex = address.startsWith("0x") ? address.slice(2) : address;
+  const trimmed = hex.replace(/^0+/, "") || "0";
+  if (trimmed.length > 64) return address;
+  return "0x" + trimmed.padStart(64, "0");
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export const ProfileScreen = () => {
-  const { sessionId, email, logout } = useAuth();
+  const { user } = usePrivy();
+  const { sessionId, email: authEmail, logout } = useAuth();
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [initLoading, setInitLoading] = useState(false);
+  const [deployLoading, setDeployLoading] = useState(false);
+  const [deployMessage, setDeployMessage] = useState<string | null>(null);
 
-  const displayName = emailToName(email);
-  const initials = nameToInitials(displayName);
+  // Derive email from Privy user (AuthContext may have it too, but user is source of truth).
+  const email = authEmail ?? user?.email?.address ?? user?.google?.email ?? null;
+  const username = emailToDisplayName(email);
+  const initials = nameToInitials(username);
+  const isLoggedIn = !!user;
 
-  // ── Fetch or create the wallet address once the user is logged in ──────────
+  // Load Starknet wallet address from backend and trigger deploy so the account exists on-chain (Voyager).
+  // We always call POST /api/wallet/init when we have a session so the backend runs deploy for existing wallets too.
   const loadWallet = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      console.warn("[Profile] loadWallet skipped: no sessionId (backend may be unreachable)");
+      return;
+    }
+    setWalletLoading(true);
+    setWalletError(null);
     const api = createApi(sessionId);
     try {
-      // First, try to get existing address
-      const res = await api.get<{ address: string | null }>("/api/wallet/address");
-      if (res.address) {
-        setWalletAddress(res.address);
-        return;
+      // Optional: quick display from GET so UI isn't empty while init runs
+      const res = await api.get<{ address?: string | null }>("/api/wallet/address");
+      const addr = res?.address ?? null;
+      if (addr && typeof addr === "string") {
+        setWalletAddress(normalizeStarknetAddress(addr));
       }
-      // Not yet created — initialize
-      setInitLoading(true);
-      await api.post("/api/wallet/init", {});
-      const res2 = await api.get<{ address: string | null }>("/api/wallet/address");
-      setWalletAddress(res2.address);
-    } catch {
-      // Silently fail — user can retry by coming back
+
+      // Always call init so backend runs deploy (for new and existing wallets). This is what makes the address show on Voyager.
+      const initRes = await api.post<{
+        address?: string;
+        ready?: boolean;
+        deployed?: boolean;
+        alreadyDeployed?: boolean;
+        txHash?: string;
+        explorerUrl?: string;
+        deployError?: string;
+      }>("/api/wallet/init", {});
+
+      const addressFromInit = initRes && typeof initRes.address === "string" ? initRes.address : null;
+      if (addressFromInit) {
+        setWalletAddress(normalizeStarknetAddress(addressFromInit));
+      }
+
+      if (initRes?.deployError) {
+        setWalletError(`Deploy failed: ${initRes.deployError}. Your address is valid; you can retry or use Stake/Convert to deploy.`);
+      } else if (initRes?.deployed && initRes?.txHash) {
+        setWalletError(null);
+        // Optionally log so user can open explorer: initRes.explorerUrl
+      } else if (!addressFromInit && !addr) {
+        const res2 = await api.get<{ address?: string | null }>("/api/wallet/address");
+        const addr2 = res2?.address ?? null;
+        if (addr2 && typeof addr2 === "string") {
+          setWalletAddress(normalizeStarknetAddress(addr2));
+        } else {
+          setWalletError("Server did not return an address. Check backend logs for [wallet/init] errors.");
+        }
+      }
+    } catch (err: any) {
+      const msg = err?.message || (typeof err === "string" ? err : "Request failed");
+      console.warn("[Profile] loadWallet error:", msg);
+
+      // Recover: address may already exist (e.g. init succeeded but response was lost).
+      try {
+        const retryRes = await api.get<{ address?: string | null }>("/api/wallet/address");
+        const retryAddr = retryRes?.address ?? null;
+        if (retryAddr && typeof retryAddr === "string") {
+          setWalletAddress(normalizeStarknetAddress(retryAddr));
+          if (msg.includes("Resources bounds") || msg.includes("starknet_addDeployAccountTransaction")) {
+            setWalletError("Address loaded. The error below is from a transaction (e.g. Stake), not from loading your address.");
+          } else {
+            setWalletError(null);
+          }
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      setWalletAddress(null);
+      if (msg.includes("Resources bounds") || msg.includes("starknet_addDeployAccountTransaction") || msg.includes("exceed balance")) {
+        setWalletError("Transaction failed (wallet not yet sponsored for gas). Your address may still load above after retry. For Stake/Convert, ensure AVNU paymaster is configured on the backend.");
+      } else {
+        setWalletError(msg);
+      }
     } finally {
-      setInitLoading(false);
+      setWalletLoading(false);
     }
   }, [sessionId]);
 
@@ -76,7 +150,6 @@ export const ProfileScreen = () => {
     loadWallet();
   }, [loadWallet]);
 
-  // ── Copy address ───────────────────────────────────────────────────────────
   const copyAddress = async () => {
     if (!walletAddress) return;
     await Clipboard.setStringAsync(walletAddress);
@@ -84,57 +157,30 @@ export const ProfileScreen = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ─── Flip card faces ───────────────────────────────────────────────────────
-
-  const cardFront = (
-    <View style={styles.cardFace}>
-      <View style={styles.avatarLarge}>
-        <Text style={styles.avatarLargeText}>{initials}</Text>
-      </View>
-      <Text style={styles.cardName}>{displayName}</Text>
-      {email ? (
-        <Text style={styles.cardEmail}>{email}</Text>
-      ) : null}
-      <View style={styles.tapHint}>
-        <Text style={styles.tapHintText}>Tap to reveal receive address →</Text>
-      </View>
-    </View>
-  );
-
-  const cardBack = (
-    <View style={[styles.cardFace, styles.cardFaceBack]}>
-      <Text style={styles.backLabel}>Your BTC Receive Address</Text>
-      {initLoading ? (
-        <Text style={styles.backAddress}>Setting up wallet…</Text>
-      ) : walletAddress ? (
-        <>
-          <View style={styles.addressBox}>
-            <Text style={styles.backAddress} selectable>
-              {walletAddress}
-            </Text>
-          </View>
-          <TouchableOpacity style={styles.copyButton} onPress={copyAddress}>
-            <Text style={styles.copyButtonText}>
-              {copied ? "✓ Copied!" : "Copy address"}
-            </Text>
-          </TouchableOpacity>
-          <Text style={styles.backNote}>
-            Send BTC to this address to start earning yield
-          </Text>
-        </>
-      ) : (
-        <Text style={styles.backAddress}>No wallet found — sign in first</Text>
-      )}
-      <View style={[styles.tapHint, { marginTop: 8 }]}>
-        <Text style={styles.tapHintText}>← Tap to flip back</Text>
-      </View>
-    </View>
-  );
-
-  // ─── Render ────────────────────────────────────────────────────────────────
+  const deployAccount = async () => {
+    if (!sessionId || !walletAddress) return;
+    setDeployLoading(true);
+    setDeployMessage(null);
+    const api = createApi(sessionId);
+    try {
+      const res = await api.post<{ alreadyDeployed?: boolean; txHash?: string; explorerUrl?: string; error?: string }>("/api/wallet/deploy", {});
+      if (res?.alreadyDeployed) {
+        setDeployMessage("Account already on-chain. View on Voyager: voyager.online");
+      } else if (res?.txHash && res?.explorerUrl) {
+        setDeployMessage("Deploy sent! View transaction:");
+        if (res.explorerUrl) Linking.openURL(res.explorerUrl);
+      } else if (res?.error) {
+        setDeployMessage(`Deploy failed: ${res.error}`);
+      }
+    } catch (err: any) {
+      setDeployMessage(err?.message || "Deploy failed");
+    } finally {
+      setDeployLoading(false);
+    }
+  };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top"]}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -142,34 +188,94 @@ export const ProfileScreen = () => {
       >
         <Text style={styles.pageTitle}>Profile</Text>
 
-        {/* ── Profile content (always shown — login gate is in App.tsx) ── */}
-        {sessionId ? (
+        {isLoggedIn ? (
           <>
-            {/* ── Avatar row ───────────────────────────────────────── */}
-            <View style={styles.avatarRow}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{initials}</Text>
+            {/* ── Profile card: username, email, Starknet address ───────────────── */}
+            <View style={styles.profileCard}>
+              <View style={styles.avatarRow}>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{initials}</Text>
+                </View>
+                <View style={styles.avatarInfo}>
+                  <Text style={[styles.label, styles.labelFirst]}>Username</Text>
+                  <Text style={styles.username}>{username}</Text>
+                  <Text style={styles.label}>Email</Text>
+                  <Text style={styles.valueText}>{email || "—"}</Text>
+                </View>
               </View>
-              <View style={{ marginLeft: 14 }}>
-                <Text style={styles.nameText}>{displayName}</Text>
-                <Text style={styles.emailText}>{email}</Text>
+
+              <View style={styles.divider} />
+
+              <View style={styles.addressSection}>
+                <Text style={styles.label}>Your 0x wallet address</Text>
+                <Text style={styles.addressHint}>
+                  Send USDC (or BTC) to this address. Copy it when depositing from an exchange or another wallet.
+                </Text>
+                {walletLoading ? (
+                  <Text style={styles.addressValue}>Loading…</Text>
+                ) : walletAddress ? (
+                  <>
+                    <View style={styles.addressBox}>
+                      <Text style={styles.addressValueFull} selectable>
+                        {walletAddress}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.copyButtonLarge, copied && styles.copyButtonDone]}
+                      onPress={copyAddress}
+                    >
+                      <Text style={styles.copyButtonText}>
+                        {copied ? "✓ Copied to clipboard" : "Copy address"}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={styles.deployHint}>
+                      Your address is not on-chain until the account is deployed. Deploy once so it appears on Voyager.
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.deployButton, deployLoading && styles.deployButtonDisabled]}
+                      onPress={deployAccount}
+                      disabled={deployLoading}
+                    >
+                      <Text style={styles.deployButtonText}>
+                        {deployLoading ? "Deploying…" : "Deploy account on-chain"}
+                      </Text>
+                    </TouchableOpacity>
+                    {deployMessage ? (
+                      <Text style={styles.deployMessage}>{deployMessage}</Text>
+                    ) : null}
+                  </>
+                ) : sessionId ? (
+                  <>
+                    <Text style={styles.addressValue}>Unable to load address</Text>
+                    {walletError ? (
+                      <Text style={styles.walletErrorText}>{walletError}</Text>
+                    ) : null}
+                    <Text style={styles.addressHint}>
+                      Ensure the backend is running (e.g. <Text style={styles.backendUnreachableCode}>cd backend && npm run dev</Text>) and <Text style={styles.backendUnreachableCode}>EXPO_PUBLIC_API_URL</Text> points to it (e.g. your machine’s IP:3001). Then tap Retry.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.retryButton}
+                      onPress={() => loadWallet()}
+                      disabled={walletLoading}
+                    >
+                      <Text style={styles.retryButtonText}>Retry</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <View style={styles.backendUnreachableBox}>
+                    <Text style={styles.backendUnreachableTitle}>Backend not connected</Text>
+                    <Text style={styles.backendUnreachableText}>
+                      Your wallet address is loaded from the server. To see it here:
+                    </Text>
+                    <Text style={styles.backendUnreachableStep}>1. Start the backend: <Text style={styles.backendUnreachableCode}>cd backend && npm run dev</Text></Text>
+                    <Text style={styles.backendUnreachableStep}>2. In .env set <Text style={styles.backendUnreachableCode}>EXPO_PUBLIC_API_URL=http://YOUR_IP:3001</Text> (use your computer’s IP if on device)</Text>
+                    <Text style={styles.backendUnreachableStep}>3. Restart the app with <Text style={styles.backendUnreachableCode}>npx expo start --clear</Text></Text>
+                  </View>
+                )}
               </View>
             </View>
 
-            {/* ── Flip card ─────────────────────────────────────────── */}
-            <Text style={styles.sectionLabel}>Receive address</Text>
-            <FlipCard
-              front={cardFront}
-              back={cardBack}
-              height={200}
-              style={styles.flipCardOuter}
-            />
-            <Text style={styles.sectionHint}>
-              Flip the card to reveal your Starknet address. Send BTC here, then
-              stake it in the Crypto tab to earn yield.
-            </Text>
-
-            {/* ── Settings ──────────────────────────────────────────── */}
+            {/* ── Account info ─────────────────────────────────────────────────── */}
             <Text style={styles.sectionLabel}>Account</Text>
             <View style={styles.card}>
               <View style={styles.settingsRow}>
@@ -177,14 +283,17 @@ export const ProfileScreen = () => {
                 <Text style={styles.settingsValue}>Starknet Mainnet</Text>
               </View>
               <View style={[styles.settingsRow, { borderBottomWidth: 0 }]}>
-                <Text style={styles.settingsKey}>Wallet type</Text>
-                <Text style={styles.settingsValue}>ArgentX (Embedded)</Text>
+                <Text style={styles.settingsKey}>Wallet</Text>
+                <Text style={styles.settingsValue}>Privy embedded (Starkzap)</Text>
               </View>
             </View>
 
             <TouchableOpacity style={styles.logoutButton} onPress={logout}>
               <Text style={styles.logoutText}>Log out</Text>
             </TouchableOpacity>
+            <Text style={styles.logoutHint}>
+              Log out to see the Privy login screen again (email or Google).
+            </Text>
           </>
         ) : null}
       </ScrollView>
@@ -204,11 +313,17 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
 
-  // ── Avatar row ─────────────────────────────────────────────────────────────
+  profileCard: {
+    backgroundColor: "#121B2E",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#1F2A3C",
+    padding: 20,
+    marginBottom: 20,
+  },
   avatarRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 24,
   },
   avatar: {
     width: 56,
@@ -221,106 +336,160 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   avatarText: { color: "#1EC98A", fontSize: 20, fontWeight: "800" },
-  nameText: { color: "#F3F5F7", fontSize: 18, fontWeight: "700" },
-  emailText: { color: "#64748B", fontSize: 13, marginTop: 2 },
-
-  // ── Flip card ──────────────────────────────────────────────────────────────
-  flipCardOuter: {
-    borderRadius: 16,
-    overflow: Platform.OS === "android" ? "hidden" : "visible",
-    marginBottom: 8,
+  avatarInfo: { marginLeft: 16, flex: 1 },
+  label: {
+    color: "#64748B",
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginTop: 10,
   },
-  cardFace: {
-    height: 200,
-    width: "100%",
-    backgroundColor: "#121B2E",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#1F2A3C",
-    padding: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cardFaceBack: {
-    backgroundColor: "#0F1E35",
-    borderColor: "#1EC98A33",
-  },
-
-  avatarLarge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#1EC98A22",
-    borderWidth: 2,
-    borderColor: "#1EC98A",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-  },
-  avatarLargeText: { color: "#1EC98A", fontSize: 24, fontWeight: "800" },
-
-  cardName: {
+  labelFirst: { marginTop: 0 },
+  username: {
     color: "#F3F5F7",
     fontSize: 18,
     fontWeight: "700",
-    textAlign: "center",
-  },
-  cardEmail: {
-    color: "#64748B",
-    fontSize: 12,
     marginTop: 2,
-    textAlign: "center",
   },
-  tapHint: { marginTop: 14 },
-  tapHintText: { color: "#2B3C52", fontSize: 12 },
-
-  // Back face
-  backLabel: {
+  valueText: {
     color: "#96A4B8",
-    fontSize: 12,
-    fontWeight: "600",
-    marginBottom: 10,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
+    fontSize: 14,
+    marginTop: 2,
   },
-  addressBox: {
-    backgroundColor: "#0B1220",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    width: "100%",
-    marginBottom: 10,
+  divider: {
+    height: 1,
+    backgroundColor: "#1F2A3C",
+    marginVertical: 16,
   },
-  backAddress: {
-    color: "#1EC98A",
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-    fontSize: 11,
-    textAlign: "center",
-  },
-  copyButton: {
-    backgroundColor: "#1EC98A",
-    paddingHorizontal: 20,
-    paddingVertical: 7,
-    borderRadius: 8,
-    marginBottom: 6,
-  },
-  copyButtonText: { color: "#0B1220", fontWeight: "700", fontSize: 13 },
-  backNote: {
-    color: "#64748B",
-    fontSize: 11,
-    textAlign: "center",
-    marginTop: 4,
-  },
-
-  sectionHint: {
+  addressSection: {},
+  addressHint: {
     color: "#64748B",
     fontSize: 12,
     lineHeight: 18,
-    marginBottom: 24,
     marginTop: 4,
+    marginBottom: 8,
+  },
+  addressBox: {
+    backgroundColor: "#0B1220",
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#1F2A3C",
+  },
+  addressValueFull: {
+    color: "#1EC98A",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  addressRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  addressValue: {
+    color: "#1EC98A",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 13,
+    flex: 1,
+  },
+  walletErrorText: {
+    color: "#F86A5C",
+    fontSize: 12,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  retryButton: {
+    alignSelf: "flex-start",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: "#1F2A3C",
+  },
+  retryButtonText: {
+    color: "#1EC98A",
+    fontWeight: "600",
+    fontSize: 13,
+  },
+  copyButtonLarge: {
+    backgroundColor: "#1EC98A",
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  copyButton: {
+    backgroundColor: "#1EC98A",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  copyButtonDone: { backgroundColor: "#1EC98A88" },
+  copyButtonText: { color: "#0B1220", fontWeight: "700", fontSize: 13 },
+
+  deployHint: {
+    color: "#64748B",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  deployButton: {
+    backgroundColor: "#1F2A3C",
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#1EC98A44",
+  },
+  deployButtonDisabled: { opacity: 0.7 },
+  deployButtonText: { color: "#1EC98A", fontWeight: "700", fontSize: 13 },
+  deployMessage: {
+    color: "#96A4B8",
+    fontSize: 12,
+    marginTop: 10,
   },
 
-  // ── Sections ───────────────────────────────────────────────────────────────
+  unavailableHint: {
+    color: "#96A4B8",
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  backendUnreachableBox: {
+    backgroundColor: "#1F2A3C",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#2B3C52",
+  },
+  backendUnreachableTitle: {
+    color: "#F3F5F7",
+    fontSize: 15,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  backendUnreachableText: {
+    color: "#96A4B8",
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: 10,
+  },
+  backendUnreachableStep: {
+    color: "#96A4B8",
+    fontSize: 12,
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  backendUnreachableCode: {
+    color: "#1EC98A",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 11,
+  },
+
   sectionLabel: {
     color: "#64748B",
     fontSize: 12,
@@ -329,22 +498,14 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 8,
   },
-
   card: {
     backgroundColor: "#121B2E",
     borderRadius: 14,
     marginBottom: 20,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#1F2A3C",
   },
-  cardTitle: {
-    color: "#F3F5F7",
-    fontWeight: "700",
-    fontSize: 15,
-    marginBottom: 14,
-    padding: 16,
-    paddingBottom: 0,
-  },
-
   settingsRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -357,14 +518,19 @@ const styles = StyleSheet.create({
   settingsKey: { color: "#96A4B8", fontSize: 14 },
   settingsValue: { color: "#F3F5F7", fontSize: 14, fontWeight: "500" },
 
-  // ── Buttons ────────────────────────────────────────────────────────────────
   logoutButton: {
     borderWidth: 1,
     borderColor: "#F86A5C44",
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: "center",
-    marginBottom: 8,
   },
   logoutText: { color: "#F86A5C", fontWeight: "600" },
+  logoutHint: {
+    color: "#64748B",
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 12,
+    paddingHorizontal: 24,
+  },
 });

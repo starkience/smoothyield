@@ -4,15 +4,16 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ActivityIndicator,
   TextInput,
   KeyboardAvoidingView,
   ScrollView,
   Platform,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useLoginWithEmail } from "@privy-io/expo";
 import { useAuth } from "../context/AuthContext";
+import { DEFAULT_BTC_STAKING_APY } from "../constants";
 
 export const LoginScreen = () => {
   const { loginWithGoogle, loading } = useAuth();
@@ -72,7 +73,7 @@ export const LoginScreen = () => {
             {[
               { icon: "📈", text: "Track your stocks & ETFs" },
               { icon: "₿",  text: "Hold BTC, ETH, SOL" },
-              { icon: "⚡", text: "Earn 4.8% APY on BTC · gasless" },
+              { icon: "⚡", text: `Earn ${DEFAULT_BTC_STAKING_APY}% APY on BTC · gasless` },
             ].map((b) => (
               <View key={b.text} style={styles.bulletRow}>
                 <Text style={styles.bulletIcon}>{b.icon}</Text>
@@ -87,42 +88,44 @@ export const LoginScreen = () => {
               <ActivityIndicator color="#1EC98A" size="large" style={{ marginBottom: 24 }} />
             ) : (
               <>
-                {/* Google */}
-                <TouchableOpacity
-                  style={styles.googleButton}
-                  onPress={loginWithGoogle}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.googleButtonText}>Continue with Google</Text>
-                </TouchableOpacity>
-
-                {/* Divider */}
-                <View style={styles.dividerRow}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>or</Text>
-                  <View style={styles.dividerLine} />
-                </View>
-
-                {/* Email OTP */}
+                {/* Email OTP — show as form or code entry */}
                 {!showEmail && !codeSent ? (
-                  <TouchableOpacity
-                    style={styles.emailToggle}
-                    onPress={() => setShowEmail(true)}
-                  >
-                    <Text style={styles.emailToggleText}>Continue with email</Text>
-                  </TouchableOpacity>
+                  <>
+                    {/* Email + Google as equal primary options */}
+                    <TouchableOpacity
+                      style={styles.primaryButton}
+                      onPress={() => setShowEmail(true)}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.primaryButtonText}>Continue with email</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.emailHint}>We’ll send a 6-digit code to your inbox</Text>
+                    <View style={styles.dividerRow}>
+                      <View style={styles.dividerLine} />
+                      <Text style={styles.dividerText}>or</Text>
+                      <View style={styles.dividerLine} />
+                    </View>
+                    <TouchableOpacity
+                      style={styles.googleButton}
+                      onPress={loginWithGoogle}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.googleButtonText}>Continue with Google</Text>
+                    </TouchableOpacity>
+                  </>
                 ) : codeSent ? (
                   /* code entry */
                   <View style={styles.otpWrap}>
-                    <Text style={styles.otpHint}>Enter the code sent to {email}</Text>
+                    <Text style={styles.otpHint}>Enter the 6-digit code sent to {email}</Text>
                     <TextInput
                       style={styles.input}
-                      placeholder="6-digit code"
+                      placeholder="000000"
                       placeholderTextColor="#4A5568"
                       keyboardType="number-pad"
                       value={code}
                       onChangeText={setCode}
                       maxLength={6}
+                      autoFocus
                     />
                     <TouchableOpacity
                       style={[styles.primaryButton, emailBusy && styles.buttonDisabled]}
@@ -131,13 +134,22 @@ export const LoginScreen = () => {
                     >
                       {emailBusy
                         ? <ActivityIndicator color="#0B1220" />
-                        : <Text style={styles.primaryButtonText}>Verify code</Text>
-                      }
+                        : <Text style={styles.primaryButtonText}>Verify code</Text>}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.emailToggle}
+                      onPress={() => {
+                        setShowEmail(false);
+                        setCode("");
+                      }}
+                    >
+                      <Text style={styles.emailToggleText}>Use a different email</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
                   /* email entry */
                   <View style={styles.otpWrap}>
+                    <Text style={styles.otpHint}>We’ll send a one-time code to this address</Text>
                     <TextInput
                       style={styles.input}
                       placeholder="your@email.com"
@@ -146,6 +158,7 @@ export const LoginScreen = () => {
                       autoCapitalize="none"
                       value={email}
                       onChangeText={setEmail}
+                      autoFocus
                     />
                     <TouchableOpacity
                       style={[styles.primaryButton, emailBusy && styles.buttonDisabled]}
@@ -154,8 +167,13 @@ export const LoginScreen = () => {
                     >
                       {emailBusy
                         ? <ActivityIndicator color="#0B1220" />
-                        : <Text style={styles.primaryButtonText}>Send code</Text>
-                      }
+                        : <Text style={styles.primaryButtonText}>Send code</Text>}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.emailToggle}
+                      onPress={() => setShowEmail(false)}
+                    >
+                      <Text style={styles.emailToggleText}>Back</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -251,6 +269,7 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.5 },
   primaryButtonText: { color: "#0B1220", fontWeight: "800", fontSize: 15 },
 
+  emailHint: { color: "#64748B", fontSize: 12, textAlign: "center", marginTop: 4, marginBottom: 8 },
   hint: { color: "#4A5568", fontSize: 12, textAlign: "center", marginTop: 16 },
   errorText: { color: "#FF6B6B", fontSize: 13, textAlign: "center", marginTop: 8 },
 });

@@ -10,14 +10,19 @@ const config: ExpoConfig = {
   userInterfaceStyle: "light",
   ios: {
     supportsTablet: true,
-    bundleIdentifier: "com.smoothyield.app"
+    bundleIdentifier: "com.smoothyield.app",
+    infoPlist: {
+      NSAppTransportSecurity: {
+        NSAllowsLocalNetworking: true,
+      },
+    },
   },
   android: {
     package: "com.smoothyield.app"
   },
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL || "http://localhost:3001",
-    privyAppId: process.env.EXPO_PUBLIC_PRIVY_APP_ID || "",
+    privyAppId: process.env.EXPO_PUBLIC_PRIVY_APP_ID || "cmm3npboo05370cjr7kp9sbg6",
     devMode: process.env.EXPO_PUBLIC_DEV_MODE || "true"
   }
 };

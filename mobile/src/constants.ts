@@ -60,6 +60,8 @@ export const cryptoAssets = [
 ];
 
 // ─── Derived totals ───────────────────────────────────────────────────────────
+/** Default BTC/LBTC staking APY (%) when backend does not provide it. Align with Voyager staking dashboard. */
+export const DEFAULT_BTC_STAKING_APY = 3.33;
 export const TRADFI_TOTAL = portfolioHoldings.reduce(
   (sum, h) => sum + h.shares * h.price,
   0,
@@ -69,3 +71,12 @@ export const CRYPTO_TOTAL = cryptoAssets.reduce(
   (sum, a) => sum + a.holding * a.price,
   0,
 );
+
+// ─── Crypto markets (for markets list; mock prices) ───────────────────────────
+export const cryptoMarkets = [
+  { symbol: "ETH", name: "Ethereum",  price: 3124.80,  changePct: -1.20, iconColor: "#627EEA" },
+  { symbol: "BTC", name: "Bitcoin",   price: 97842.50, changePct:  2.40, iconColor: "#F7931A" },
+  { symbol: "SOL", name: "Solana",    price: 182.45,   changePct:  5.10, iconColor: "#9945FF" },
+  { symbol: "STRK", name: "Starknet", price: 1.24,     changePct:  3.20, iconColor: "#E2491A" },
+  { symbol: "USDC", name: "USD Coin", price: 1.00,     changePct:  0.00, iconColor: "#2775CA" },
+];

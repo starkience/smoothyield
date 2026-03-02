@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS wallets (
   privy_user_id TEXT PRIMARY KEY,
   wallet_address TEXT NOT NULL,
+  privy_wallet_id TEXT,
+  public_key TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS onramp_sessions (
@@ -48,6 +50,17 @@ CREATE TABLE IF NOT EXISTS stark_keys (
 );
 `);
 
+// Add optional columns to wallets for existing DBs (no-op if already present)
+try {
+  db.exec("ALTER TABLE wallets ADD COLUMN privy_wallet_id TEXT");
+} catch {}
+try {
+  db.exec("ALTER TABLE wallets ADD COLUMN public_key TEXT");
+} catch {}
+try {
+  db.exec("ALTER TABLE yield_positions ADD COLUMN staked_amount_lbtc TEXT");
+} catch {}
+
 export const queries = {
   upsertUser: db.prepare(
     "INSERT INTO users (privy_user_id, email) VALUES (@privy_user_id, @email) ON CONFLICT(privy_user_id) DO UPDATE SET email=excluded.email"
@@ -57,9 +70,10 @@ export const queries = {
   ),
   getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
   upsertWallet: db.prepare(
-    "INSERT INTO wallets (privy_user_id, wallet_address, created_at) VALUES (@privy_user_id, @wallet_address, @created_at) ON CONFLICT(privy_user_id) DO UPDATE SET wallet_address=excluded.wallet_address"
+    "INSERT INTO wallets (privy_user_id, wallet_address, privy_wallet_id, public_key, created_at) VALUES (@privy_user_id, @wallet_address, @privy_wallet_id, @public_key, @created_at) ON CONFLICT(privy_user_id) DO UPDATE SET wallet_address=excluded.wallet_address, privy_wallet_id=COALESCE(excluded.privy_wallet_id, privy_wallet_id), public_key=COALESCE(excluded.public_key, public_key)"
   ),
   getWallet: db.prepare("SELECT * FROM wallets WHERE privy_user_id = ?"),
+  getWalletByPrivyWalletId: db.prepare("SELECT * FROM wallets WHERE privy_wallet_id = ?"),
   createOnrampSession: db.prepare(
     "INSERT INTO onramp_sessions (id, privy_user_id, status, amount_usdc, created_at) VALUES (@id, @privy_user_id, @status, @amount_usdc, @created_at)"
   ),
@@ -70,7 +84,7 @@ export const queries = {
     "UPDATE onramp_sessions SET status = @status WHERE id = @id"
   ),
   upsertYieldPosition: db.prepare(
-    "INSERT INTO yield_positions (privy_user_id, status, apy, accrued_usd) VALUES (@privy_user_id, @status, @apy, @accrued_usd) ON CONFLICT(privy_user_id) DO UPDATE SET status=excluded.status, apy=excluded.apy, accrued_usd=excluded.accrued_usd"
+    "INSERT INTO yield_positions (privy_user_id, status, apy, accrued_usd, staked_amount_lbtc) VALUES (@privy_user_id, @status, @apy, @accrued_usd, @staked_amount_lbtc) ON CONFLICT(privy_user_id) DO UPDATE SET status=excluded.status, apy=excluded.apy, accrued_usd=excluded.accrued_usd, staked_amount_lbtc=COALESCE(excluded.staked_amount_lbtc, staked_amount_lbtc)"
   ),
   getYieldPosition: db.prepare("SELECT * FROM yield_positions WHERE privy_user_id = ?"),
   upsertTx: db.prepare(

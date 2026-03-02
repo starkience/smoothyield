@@ -1,4 +1,10 @@
-const BASE_URL = (process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000").replace(/\/$/, "");
+import Constants from "expo-constants";
+
+const extra = Constants.expoConfig?.extra as { apiUrl?: string } | undefined;
+const BASE_URL = (extra?.apiUrl ?? process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3001")
+  .replace(/\/$/, "");
+
+export const getApiBaseUrl = () => BASE_URL;
 
 export const createApi = (sessionId?: string | null) => {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -11,7 +17,7 @@ export const createApi = (sessionId?: string | null) => {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as any)?.error || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error((data as any)?.message || (data as any)?.error || `HTTP ${res.status}`);
     return data as T;
   };
 

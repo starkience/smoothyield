@@ -9,16 +9,20 @@
   },
   "dependencies": {
     "@avnu/avnu-sdk": "^1.1.0",
+    "@privy-io/node": "^0.10.0",
     "@privy-io/server-auth": "^1.32.5",
     "better-sqlite3": "^12.6.2",
+    "canonicalize": "^2.1.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "jose": "^4.15.9",
     "starknet": "^6.9.0",
     "starkzap": "^1.0.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.0.0",

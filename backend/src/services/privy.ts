@@ -17,6 +17,6 @@ export const verifyPrivyToken = async (token: string): Promise<PrivyUserInfo> =>
   if (!client) {
     throw new Error("Privy client not configured");
   }
-  const user = await client.verifyAuthToken(token);
+  const user: any = await client.verifyAuthToken(token);
   return { id: user.userId, email: user.email?.address };
 };

@@ -4,8 +4,8 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  SafeAreaView,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { markets, portfolioHoldings, TRADFI_TOTAL } from "../constants";
 import { MarketRow } from "../components/MarketRow";
 

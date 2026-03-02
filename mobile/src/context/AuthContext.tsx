@@ -6,7 +6,7 @@ import React, {
   useState,
 } from "react";
 import { usePrivy, useLoginWithOAuth } from "@privy-io/expo";
-import { createApi } from "../api";
+import { createApi, getApiBaseUrl } from "../api";
 
 interface AuthContextValue {
   /** Backend session ID — null when not authenticated */
@@ -15,6 +15,8 @@ interface AuthContextValue {
   email: string | null;
   /** True while Privy is initialising or while bootstrapping the backend session */
   loading: boolean;
+  /** Get a fresh Privy access token (for wallet signing; use before stake/deploy). */
+  getAccessToken: () => Promise<string | null>;
   /** Kick off Google OAuth login */
   loginWithGoogle: () => void;
   /** Log out from both Privy and the backend session */
@@ -25,6 +27,7 @@ const AuthContext = createContext<AuthContextValue>({
   sessionId: null,
   email: null,
   loading: true,
+  getAccessToken: async () => null,
   loginWithGoogle: () => {},
   logout: async () => {},
 });
@@ -49,10 +52,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const privyToken = await getAccessToken();
         if (!privyToken || cancelled) return;
         const api = createApi();
-        const data = await api.post<{ sessionId: string }>("/api/auth/session", { privyToken });
+        const url = "/api/auth/session";
+        const data = await api.post<{ sessionId: string }>(url, { privyToken });
         if (!cancelled) setSessionId(data.sessionId);
-      } catch (err) {
-        console.error("[Auth] session bootstrap failed:", err);
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        console.warn("[Auth] session bootstrap failed (backend unreachable):", msg);
+        console.warn("[Auth] API base URL:", getApiBaseUrl());
       } finally {
         if (!cancelled) setBootstrapping(false);
       }
@@ -88,7 +94,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         sessionId,
         email,
-        loading: !isReady || bootstrapping,
+        loading: !isReady,
+        getAccessToken: async () => getAccessToken() ?? null,
         loginWithGoogle,
         logout,
       }}

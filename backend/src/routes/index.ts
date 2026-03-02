@@ -4,15 +4,21 @@ import crypto from "crypto";
 import { requireSession } from "../middleware";
 import { queries } from "../db";
 import { verifyPrivyToken } from "../services/privy";
+import { verifyPrivyAccessTokenWithJwks } from "../utils/privyJwks";
 import { config } from "../config";
 import {
   onboardPrivyWallet,
   getBalances,
+  getBalancesByAddress,
   getExplorerUrl,
   getTxStatus,
   getTokenAddresses,
   sendSponsoredTx,
+  deployAccountIfNeeded,
 } from "../services/starkzap";
+import { createStarknetWallet, rawSign, setSignTokenForWallet, getSignTokenForWallet } from "../services/privyWallet";
+import { normalizeStarknetAddress } from "../utils/address";
+import { normalizePrivyToken } from "../utils/privyToken";
 import { tradfiHoldings, cashUsd, totalValueUsd } from "../services/mockData";
 import { buildSwapCalls } from "../services/avnu";
 import { stakeLbtc } from "../adapters/staking";
@@ -26,14 +32,16 @@ apiRouter.post("/auth/session", async (req, res) => {
   if (!body.success) return res.status(400).json({ error: "Invalid body" });
 
   try {
-    const user = await verifyPrivyToken(body.data.privyToken);
+    const rawToken = body.data.privyToken;
+    const token = normalizePrivyToken(rawToken);
+    const user = await verifyPrivyToken(token);
     queries.upsertUser.run({ privy_user_id: user.id, email: user.email || null });
 
     const sessionId = crypto.randomUUID();
     queries.createSession.run({
       id: sessionId,
       privy_user_id: user.id,
-      privy_token: body.data.privyToken,
+      privy_token: token,
       created_at: new Date().toISOString(),
     });
 
@@ -44,27 +52,171 @@ apiRouter.post("/auth/session", async (req, res) => {
 });
 
 // ─── Wallet ───────────────────────────────────────────────────────────────────
+// Starkzap Privy integration: https://docs.starknet.io/build/starkzap/connecting-wallets
+// and https://docs.starknet.io/build/starkzap/integrations/privy
 
-apiRouter.post("/wallet/init", requireSession, async (req, res) => {
+/**
+ * POST /api/wallet/starknet
+ * Starkzap-compatible endpoint: client sends Authorization: Bearer <accessToken>, backend returns
+ * { wallet: { id, address, publicKey } } for use with PrivySigner / sdk.onboard({ strategy: OnboardStrategy.Privy, privy: { resolve: () => fetch this } }).
+ * Creates or returns the Starknet wallet for the authenticated user.
+ */
+apiRouter.post("/wallet/starknet", async (req, res) => {
+  const rawToken = req.headers.authorization?.replace(/^Bearer\s+/i, "")?.trim();
+  const token = normalizePrivyToken(rawToken || "");
+  if (!token) {
+    return res.status(401).json({ error: "Authorization: Bearer <accessToken> required" });
+  }
+
   try {
-    const wallet = await onboardPrivyWallet(req.session!.privy_user_id, req.session!.privy_token);
-    const walletAddress =
-      wallet?.address || wallet?.accountAddress || wallet?.account?.address;
+    let privyUserId: string;
+    if (config.privyJwksUrl) {
+      try {
+        await verifyPrivyAccessTokenWithJwks(token);
+      } catch {
+        return res.status(401).json({ error: "Invalid or expired token" });
+      }
+    }
+    const user = await verifyPrivyToken(token);
+    privyUserId = user.id;
 
-    if (!walletAddress) {
-      return res.status(500).json({ error: "Wallet address unavailable" });
+    queries.upsertUser.run({ privy_user_id: privyUserId, email: user.email ?? null });
+    let walletRow = queries.getWallet.get(privyUserId) as any;
+
+    if (!walletRow?.privy_wallet_id || !walletRow?.public_key) {
+      const privyWallet = await createStarknetWallet(privyUserId);
+      const address = normalizeStarknetAddress(privyWallet.address);
+      queries.upsertWallet.run({
+        privy_user_id: privyUserId,
+        wallet_address: address,
+        privy_wallet_id: privyWallet.id,
+        public_key: privyWallet.public_key,
+        created_at: new Date().toISOString(),
+      });
+      walletRow = queries.getWallet.get(privyUserId) as any;
     }
 
-    queries.upsertWallet.run({
-      privy_user_id: req.session!.privy_user_id,
-      wallet_address: walletAddress,
-      created_at: new Date().toISOString(),
-    });
+    setSignTokenForWallet(walletRow.privy_wallet_id, token);
 
-    return res.json({ ready: true, address: walletAddress });
+    return res.json({
+      wallet: {
+        id: walletRow.privy_wallet_id,
+        address: normalizeStarknetAddress(walletRow.wallet_address),
+        publicKey: walletRow.public_key ?? "",
+      },
+    });
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || "Wallet init failed" });
+    const msg = err?.message || "Wallet failed";
+    if (msg.includes("expired") || msg.includes("invalid") || msg.includes("verification")) {
+      return res.status(401).json({ error: msg });
+    }
+    console.error("[wallet/starknet]", msg, err);
+    return res.status(500).json({ error: msg });
   }
+});
+
+apiRouter.post("/wallet/init", requireSession, async (req, res) => {
+  const body = z.object({ privyToken: z.string().optional() }).safeParse(req.body);
+  const signToken = normalizePrivyToken(
+    (body.success && body.data.privyToken ? body.data.privyToken : req.session!.privy_token) || ""
+  );
+
+  try {
+    const privyUserId = req.session!.privy_user_id;
+    let walletRow = queries.getWallet.get(privyUserId) as any;
+
+    if (!walletRow?.wallet_address || !walletRow?.privy_wallet_id) {
+      const privyWallet = await createStarknetWallet(privyUserId);
+      const address = normalizeStarknetAddress(privyWallet.address);
+      queries.upsertWallet.run({
+        privy_user_id: privyUserId,
+        wallet_address: address,
+        privy_wallet_id: privyWallet.id,
+        public_key: privyWallet.public_key,
+        created_at: new Date().toISOString(),
+      });
+      walletRow = queries.getWallet.get(privyUserId) as any;
+    }
+
+    const address = normalizeStarknetAddress(walletRow!.wallet_address);
+
+    // Always try to deploy if we have credentials and paymaster (so address shows on Voyager / balances on-chain).
+    // Run for both new and existing wallets so we don't miss deploy due to race or earlier failure.
+    let deployResult: { deployed?: boolean; alreadyDeployed?: boolean; txHash?: string; explorerUrl?: string; deployError?: string } = {};
+    if (walletRow?.privy_wallet_id && walletRow?.public_key && config.avnuPaymasterApiKey) {
+      try {
+        setSignTokenForWallet(walletRow.privy_wallet_id, signToken);
+        const wallet = await onboardPrivyWallet(
+          privyUserId,
+          walletRow.privy_wallet_id,
+          walletRow.public_key,
+          getSignEndpointUrl()
+        );
+        const result = await deployAccountIfNeeded(wallet);
+        if ("alreadyDeployed" in result) {
+          deployResult = { deployed: true, alreadyDeployed: true };
+          console.log("[wallet/init] account already deployed on-chain");
+        } else {
+          deployResult = { deployed: true, txHash: result.txHash, explorerUrl: result.explorerUrl };
+          console.log("[wallet/init] deploy tx sent:", result.txHash, result.explorerUrl);
+        }
+      } catch (err: any) {
+        deployResult = { deployed: false, deployError: err?.message || "Deploy failed" };
+        console.error("[wallet/init] auto-deploy failed:", err?.message, err);
+      }
+    } else if (!config.avnuPaymasterApiKey) {
+      console.warn("[wallet/init] AVNU_PAYMASTER_API_KEY not set; skipping deploy (address will not appear on Voyager until first Stake/Convert).");
+    }
+
+    return res.json({ ready: true, address, ...deployResult });
+  } catch (err: any) {
+    const message = err?.message || "Wallet init failed";
+    console.error("[wallet/init]", message, err);
+    return res.status(500).json({ error: message });
+  }
+});
+
+// POST /api/wallet/sign — called by Starkzap (or our backend) to sign with Privy.
+// Starkzap doc: "Your backend endpoint receives { walletId, hash } and must return { signature }."
+// Secured by query param key (only our backend knows it) when called from our server.
+apiRouter.post("/wallet/sign", (req, res) => {
+  const key = req.query.key as string;
+  if (key !== config.internalSignKey) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const body = z
+    .object({ walletId: z.string(), hash: z.string() })
+    .safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: "Invalid body" });
+
+  // Wallet must exist in our DB (we don't tie to session; caller is our backend)
+  const walletRow = queries.getWalletByPrivyWalletId.get(body.data.walletId) as any;
+  if (!walletRow) {
+    return res.status(403).json({ error: "Wallet not found" });
+  }
+
+  const cachedToken = getSignTokenForWallet(body.data.walletId);
+  console.log("[wallet/sign] walletId:", body.data.walletId, "| token from cache:", cachedToken ? "yes" : "no");
+
+  rawSign(body.data.walletId, body.data.hash, cachedToken)
+    .then((signature) => res.json({ signature }))
+    .catch((err: any) => {
+      const msg = err?.message || "Sign failed";
+      const isInvalidJwt = msg.includes("Invalid JWT token") || (err?.status === 400 && err?.error?.code === "invalid_data");
+      console.error("[wallet/sign]", msg, err);
+      if (isInvalidJwt) {
+        console.error(
+          "[wallet/sign] Privy's wallet API rejected the JWT (our JWKS verification passed).",
+          "Enable Server-side access in the Privy dashboard or contact Privy support — see backend/PRIVY_WALLET_400.md"
+        );
+        return res.status(503).json({
+          error: "Wallet sign unavailable",
+          code: "PRIVY_SERVER_SIDE_ACCESS_REQUIRED",
+          message: "Staking is temporarily unavailable. Privy must enable server-side access for this app. Contact support@privy.io with your app ID to request it.",
+        });
+      }
+      res.status(500).json({ error: msg });
+    });
 });
 
 // GET /api/wallet/address
@@ -78,30 +230,63 @@ apiRouter.get("/wallet/address", requireSession, async (req, res) => {
     return res.json({ address: null });
   }
 
-  return res.json({ address: walletRow.wallet_address });
+  return res.json({ address: normalizeStarknetAddress(walletRow.wallet_address) });
+});
+
+// POST /api/wallet/deploy
+// Deploy the account on-chain (sponsored) so the address shows on Voyager and balance is on-chain.
+// Optional: call before any DeFi so the account exists; GET /portfolio already shows balance by address without deploy.
+apiRouter.post("/wallet/deploy", requireSession, async (req, res) => {
+  try {
+    const walletRow = queries.getWallet.get(req.session!.privy_user_id) as any;
+    if (!walletRow?.privy_wallet_id || !walletRow?.public_key) {
+      return res.status(400).json({ error: "Wallet not initialized. Call /api/wallet/init first." });
+    }
+    const wallet = await onboardPrivyWallet(
+      req.session!.privy_user_id,
+      walletRow.privy_wallet_id,
+      walletRow.public_key,
+      getSignEndpointUrl()
+    );
+    setSignTokenForWallet(walletRow.privy_wallet_id, normalizePrivyToken(req.session!.privy_token || ""));
+    const result = await deployAccountIfNeeded(wallet);
+    return res.json(result);
+  } catch (err: any) {
+    const raw = err?.message || "Deploy failed";
+    const msg = raw.includes("Resources bounds") || raw.includes("exceed balance (0)")
+      ? "Deploy failed: gas sponsorship required. Set AVNU_PAYMASTER_API_KEY in backend .env."
+      : raw;
+    return res.status(500).json({ error: msg });
+  }
 });
 
 // ─── Portfolio ────────────────────────────────────────────────────────────────
+
+function getSignEndpointUrl(): string {
+  return `${config.backendBaseUrl}/api/wallet/sign?key=${config.internalSignKey}`;
+}
 
 apiRouter.get("/portfolio", requireSession, async (req, res) => {
   let usdcBalance = "0";
   let lbtcBalance = "0";
 
-  try {
-    const walletRow = queries.getWallet.get(req.session!.privy_user_id) as any;
-    if (walletRow) {
-      const wallet = await onboardPrivyWallet(req.session!.privy_user_id, req.session!.privy_token);
-      const balances = await getBalances(wallet);
+  // Read balances by address only (no Starkzap wallet = no deploy). Avoids DEPLOY_ACCOUNT
+  // when user opens Profile/Portfolio; deploy only happens on Stake/Convert.
+  const walletRow = queries.getWallet.get(req.session!.privy_user_id) as any;
+  if (walletRow?.wallet_address) {
+    try {
+      const address = normalizeStarknetAddress(walletRow.wallet_address);
+      const balances = await getBalancesByAddress(address);
       usdcBalance = balances.usdcBalance;
       lbtcBalance = balances.lbtcBalance;
+    } catch {
+      // keep defaults
     }
-  } catch {
-    // keep defaults
   }
 
   const yieldPosition = (queries.getYieldPosition.get(
     req.session!.privy_user_id,
-  ) as any) || { status: "none", apy: 0, accrued_usd: 0 };
+  ) as any) || { status: "none", apy: 0, accrued_usd: 0, staked_amount_lbtc: null };
 
   return res.json({
     tradfiHoldings,
@@ -110,10 +295,12 @@ apiRouter.get("/portfolio", requireSession, async (req, res) => {
     crypto: {
       usdcBalance,
       lbtcBalance,
+      btcStakingApy: config.btcStakingApy,
       btcYieldPosition: {
         status: yieldPosition.status,
         apy: yieldPosition.apy,
         accruedUsd: yieldPosition.accrued_usd,
+        stakedAmountLbtc: yieldPosition.staked_amount_lbtc ?? null,
       },
     },
   });
@@ -171,19 +358,28 @@ apiRouter.post("/yield/convert", requireSession, async (req, res) => {
   }
 
   try {
-    const wallet = await onboardPrivyWallet(req.session!.privy_user_id, req.session!.privy_token);
-    const walletAddress =
-      wallet?.address || wallet?.accountAddress || wallet?.account?.address;
+    const walletRow = queries.getWallet.get(req.session!.privy_user_id) as any;
+    if (!walletRow?.privy_wallet_id || !walletRow?.public_key) {
+      return res.status(400).json({ error: "Wallet not initialized. Call /api/wallet/init first." });
+    }
+    setSignTokenForWallet(walletRow.privy_wallet_id, normalizePrivyToken(req.session!.privy_token || ""));
+    const wallet = await onboardPrivyWallet(
+      req.session!.privy_user_id,
+      walletRow.privy_wallet_id,
+      walletRow.public_key,
+      getSignEndpointUrl()
+    );
+    const walletAddress = wallet?.address || wallet?.accountAddress || wallet?.account?.address;
     if (!walletAddress) {
       return res.status(500).json({ error: "Wallet address unavailable" });
     }
 
-    const { usdc, lbtc } = getTokenAddresses();
+    const { usdc, lbtc } = await getTokenAddresses();
     const sellAmount = body.data.amountUsdc || "1000000";
 
     const { calls } = await buildSwapCalls({
-      sellTokenAddress: usdc,
-      buyTokenAddress: lbtc,
+      sellTokenAddress: usdc.address,
+      buyTokenAddress: lbtc.address,
       sellAmount,
       takerAddress: walletAddress,
     });
@@ -203,31 +399,75 @@ apiRouter.post("/yield/convert", requireSession, async (req, res) => {
       status: "submitted",
     });
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || "Swap failed" });
+    const raw = err?.message || "Swap failed";
+    const msg = raw.includes("Resources bounds") || raw.includes("exceed balance (0)")
+      ? "Convert failed: wallet deploy needs gas sponsorship. Set AVNU_PAYMASTER_API_KEY in backend .env and ensure paymaster is used for the first deploy."
+      : raw;
+    return res.status(500).json({ error: msg });
   }
 });
 
 apiRouter.post("/yield/stake", requireSession, async (req, res) => {
   const body = z
-    .object({ amountLbtc: z.string().optional() })
+    .object({
+      amountLbtc: z.string().optional(),
+      /** Fresh Privy access token for signing; use when session token may be expired. */
+      privyToken: z.string().optional(),
+    })
     .safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Invalid body" });
 
   try {
-    const wallet = await onboardPrivyWallet(req.session!.privy_user_id, req.session!.privy_token);
+    const walletRow = queries.getWallet.get(req.session!.privy_user_id) as any;
+    if (!walletRow?.privy_wallet_id || !walletRow?.public_key) {
+      return res.status(400).json({ error: "Wallet not initialized. Call /api/wallet/init first." });
+    }
+    // Prefer fresh token from request so signing uses a valid JWT (session token may be expired).
+    const signToken = normalizePrivyToken(
+      (body.data.privyToken ?? req.session!.privy_token) || ""
+    );
+    console.log("[yield/stake] privyToken from body:", body.data.privyToken ? "present (using fresh)" : "missing (using session)");
+    // Verify token is valid for our app before using for wallet sign (JWKS or Privy API).
+    if (!signToken) {
+      return res.status(401).json({ error: "Missing session or token. Please log in again." });
+    }
+    try {
+      if (config.privyJwksUrl) {
+        await verifyPrivyAccessTokenWithJwks(signToken);
+        console.log("[yield/stake] token verified via JWKS, using for wallet sign");
+      } else {
+        await verifyPrivyToken(signToken);
+        console.log("[yield/stake] token verified for app, using for wallet sign");
+      }
+    } catch (e: any) {
+      console.warn("[yield/stake] token verification failed:", e?.message);
+      return res.status(401).json({ error: "Invalid or expired session. Please log in again." });
+    }
+    setSignTokenForWallet(walletRow.privy_wallet_id, signToken);
+    const wallet = await onboardPrivyWallet(
+      req.session!.privy_user_id,
+      walletRow.privy_wallet_id,
+      walletRow.public_key,
+      getSignEndpointUrl()
+    );
     const amount = body.data.amountLbtc || "1000000";
     const result = await stakeLbtc(wallet, amount);
 
     queries.upsertYieldPosition.run({
       privy_user_id: req.session!.privy_user_id,
       status: "earning",
-      apy: 4.8,
+      apy: config.btcStakingApy,
       accrued_usd: 3.12,
+      staked_amount_lbtc: amount,
     });
 
     return res.json(result);
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || "Stake failed" });
+    const raw = err?.message || "Stake failed";
+    const msg = raw.includes("Resources bounds") || raw.includes("exceed balance (0)")
+      ? "Stake failed: wallet deploy needs gas sponsorship. Set AVNU_PAYMASTER_API_KEY in backend .env and ensure paymaster is used for the first deploy."
+      : raw;
+    return res.status(500).json({ error: msg });
   }
 });
 

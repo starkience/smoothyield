@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -6,14 +6,23 @@ import {
   TouchableOpacity,
   Linking,
   ScrollView,
-  SafeAreaView,
+  TextInput,
 } from "react-native";
-import QRCode from "react-native-qrcode-svg";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { createApi } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { cryptoMarkets } from "../constants";
 
-const PHASES = ["Deposit BTC", "Staking on Starknet", "Earning"] as const;
+const DEFAULT_BTC_STAKING_APY = 3.33; // fallback when API does not return btcStakingApy
+const PHASES = ["Staking on Starknet", "Earning"] as const;
 type Phase = "idle" | "staking" | "earning";
+
+const LBTC_DECIMALS = 8;
+function displayToRawLbtc(display: string): string {
+  const n = parseFloat(display);
+  if (!Number.isFinite(n) || n < 0) return "0";
+  return Math.floor(n * 10 ** LBTC_DECIMALS).toString();
+}
 
 interface Props {
   /** When true the screen is embedded inside CryptoScreen — no SafeAreaView wrapper */
@@ -21,49 +30,68 @@ interface Props {
 }
 
 export const YieldScreen: React.FC<Props> = ({ embedded = false }) => {
-  const { sessionId } = useAuth();
+  const { sessionId, getAccessToken } = useAuth();
   const [phase, setPhase] = useState<Phase>("idle");
-  const [onrampUrl, setOnrampUrl] = useState<string | null>(null);
-  const [swapTx, setSwapTx] = useState<{ hash: string; url: string } | null>(null);
   const [stakeTx, setStakeTx] = useState<{ hash: string; url: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stakeAmountDisplay, setStakeAmountDisplay] = useState("1");
+  const [lbtcBalanceRaw, setLbtcBalanceRaw] = useState<string | null>(null);
+  const [btcStakingApy, setBtcStakingApy] = useState<number>(DEFAULT_BTC_STAKING_APY);
 
   const api = useMemo(() => createApi(sessionId), [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get<{ crypto?: { lbtcBalance?: string; btcStakingApy?: number } }>("/api/portfolio");
+        if (!cancelled) {
+          setLbtcBalanceRaw(res.crypto?.lbtcBalance ?? "0");
+          if (res.crypto?.btcStakingApy != null) setBtcStakingApy(res.crypto.btcStakingApy);
+        }
+      } catch {
+        if (!cancelled) setLbtcBalanceRaw("0");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId, api]);
+
+  const lbtcBalanceFormatted =
+    lbtcBalanceRaw != null
+      ? (Number(lbtcBalanceRaw) / 10 ** LBTC_DECIMALS).toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 6,
+        })
+      : null;
+
+  const btcPrice = cryptoMarkets.find((m) => m.symbol === "BTC")?.price ?? 0;
+  const lbtcUsd =
+    lbtcBalanceRaw != null
+      ? (Number(lbtcBalanceRaw) / 10 ** LBTC_DECIMALS) * btcPrice
+      : 0;
 
   const initAndStake = async () => {
     setError(null);
     if (!sessionId) return;
+    const amountRaw = displayToRawLbtc(stakeAmountDisplay);
+    if (amountRaw === "0") {
+      setError("Enter an amount to stake");
+      return;
+    }
     try {
       setPhase("staking");
-      // Ensure wallet is ready
-      await api.post("/api/wallet/init", {});
-      // Swap USDC → LBTC (mocked in DEV_MODE)
-      const swap = await api.post<{ txHash: string; explorerUrl: string }>(
-        "/api/yield/convert",
-        { amountUsdc: "1000000" },
-      );
-      setSwapTx({ hash: swap.txHash, url: swap.explorerUrl });
-      // Stake LBTC on Starknet
+      const freshToken = await getAccessToken();
+      await api.post("/api/wallet/init", freshToken ? { privyToken: freshToken } : {});
       const stake = await api.post<{ txHash: string; explorerUrl: string }>(
         "/api/yield/stake",
-        { amountLbtc: "1000000" },
+        freshToken ? { amountLbtc: amountRaw, privyToken: freshToken } : { amountLbtc: amountRaw },
       );
       setStakeTx({ hash: stake.txHash, url: stake.explorerUrl });
       setPhase("earning");
     } catch (err: any) {
       setError(err?.message || "Staking failed");
       setPhase("idle");
-    }
-  };
-
-  const generateQR = async () => {
-    setError(null);
-    if (!sessionId) return;
-    try {
-      const res = await api.post<{ onrampUrl: string }>("/api/onramp/session", {});
-      setOnrampUrl(res.onrampUrl);
-    } catch (err: any) {
-      setError(err?.message || "Could not generate QR");
     }
   };
 
@@ -78,7 +106,7 @@ export const YieldScreen: React.FC<Props> = ({ embedded = false }) => {
         <>
           <Text style={styles.title}>BTC Yield</Text>
           <Text style={styles.subtitle}>
-            Deposit BTC · stake on Starknet · earn 4.8% APY. No seed phrases, no gas.
+            Deposit BTC · stake on Starknet · earn {btcStakingApy}% APY. No seed phrases, no gas.
           </Text>
         </>
       )}
@@ -86,44 +114,75 @@ export const YieldScreen: React.FC<Props> = ({ embedded = false }) => {
       {/* ── APY card ─────────────────────────────────────────────────── */}
       <View style={styles.apyCard}>
         <Text style={styles.apyLabel}>Current APY</Text>
-        <Text style={styles.apyValue}>4.8%</Text>
+        <Text style={styles.apyValue}>{btcStakingApy}%</Text>
         <Text style={styles.apyNote}>Powered by Starknet · Gasless via AVNU Paymaster</Text>
       </View>
 
       {/* ── Main content (auth gate is in App.tsx) ───────────────────── */}
       {sessionId ? (
         <>
-          {/* ── Receive address QR ───────────────────────────────────── */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Step 1 — Deposit BTC</Text>
-            <Text style={styles.cardBody}>
-              Go to your Profile tab, flip the card to reveal your receive address,
-              and send BTC to it. Then come back here to stake.
-            </Text>
-            <TouchableOpacity style={styles.secondaryButton} onPress={generateQR}>
-              <Text style={styles.secondaryButtonText}>Generate deposit QR</Text>
-            </TouchableOpacity>
-            {onrampUrl && (
-              <View style={styles.qrWrap}>
-                <QRCode
-                  value={onrampUrl}
-                  size={180}
-                  backgroundColor="#121B2E"
-                  color="#F3F5F7"
-                />
-                <Text style={styles.qrText}>Scan to deposit BTC</Text>
-              </View>
-            )}
-          </View>
-
           {/* ── Stake CTA ─────────────────────────────────────────────── */}
           {phase === "idle" && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Step 2 — Stake on Starknet</Text>
+              <Text style={styles.cardTitle}>Stake on Starknet</Text>
               <Text style={styles.cardBody}>
-                Once BTC is in your wallet, tap below. The app swaps it to LBTC
-                and stakes it gaslessly on Starknet.
+                Enter how much LBTC to stake. You need LBTC in your wallet (e.g. from depositing BTC).
+                Staking is gasless on Starknet.
               </Text>
+              {lbtcBalanceFormatted != null && (
+                <Text style={styles.balanceLabel}>
+                  Available: {lbtcBalanceFormatted} LBTC
+                  {lbtcUsd > 0 && (
+                    <Text style={styles.balanceUsd}> (${lbtcUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</Text>
+                  )}
+                </Text>
+              )}
+              <View style={styles.percentRow}>
+                {([10, 25, 50, 75, 100] as const).map((pct) => {
+                  const balanceNum = lbtcBalanceRaw != null ? Number(lbtcBalanceRaw) / 10 ** LBTC_DECIMALS : 0;
+                  const hasBalance = balanceNum > 0;
+                  return (
+                    <TouchableOpacity
+                      key={pct}
+                      onPress={() => {
+                        const amount = hasBalance
+                          ? (balanceNum * pct / 100).toString()
+                          : "0";
+                        setStakeAmountDisplay(amount);
+                      }}
+                      style={[styles.percentButton, !hasBalance && styles.percentButtonDisabled]}
+                      disabled={!hasBalance}
+                    >
+                      <Text style={[styles.percentButtonText, !hasBalance && styles.percentButtonTextDisabled]}>
+                        {pct}%
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <TextInput
+                style={styles.amountInput}
+                value={stakeAmountDisplay}
+                onChangeText={setStakeAmountDisplay}
+                placeholder="0"
+                placeholderTextColor="#64748B"
+                keyboardType="decimal-pad"
+                maxLength={18}
+              />
+              <View style={styles.amountRow}>
+                <Text style={styles.amountUnit}>LBTC</Text>
+                {lbtcBalanceRaw != null && Number(lbtcBalanceRaw) > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      const max = (Number(lbtcBalanceRaw) / 10 ** LBTC_DECIMALS).toString();
+                      setStakeAmountDisplay(max);
+                    }}
+                    style={styles.maxButton}
+                  >
+                    <Text style={styles.maxButtonText}>Max</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
               <TouchableOpacity style={styles.primaryButton} onPress={initAndStake}>
                 <Text style={styles.primaryButtonText}>Stake BTC now</Text>
               </TouchableOpacity>
@@ -147,22 +206,12 @@ export const YieldScreen: React.FC<Props> = ({ embedded = false }) => {
           {phase === "earning" && (
             <View style={[styles.card, styles.earningCard]}>
               <Text style={styles.earningLabel}>You are now earning</Text>
-              <Text style={styles.earningValue}>4.8% APY</Text>
+              <Text style={styles.earningValue}>{btcStakingApy}% APY</Text>
               <Text style={styles.earningNote}>on your BTC via Starknet</Text>
-              {swapTx && (
-                <TouchableOpacity
-                  onPress={() => Linking.openURL(swapTx.url)}
-                  style={{ marginTop: 12 }}
-                >
-                  <Text style={styles.link}>
-                    Swap tx: {swapTx.hash.slice(0, 12)}…
-                  </Text>
-                </TouchableOpacity>
-              )}
               {stakeTx && (
                 <TouchableOpacity
                   onPress={() => Linking.openURL(stakeTx.url)}
-                  style={{ marginTop: 6 }}
+                  style={{ marginTop: 12 }}
                 >
                   <Text style={styles.link}>
                     Stake tx: {stakeTx.hash.slice(0, 12)}…
@@ -238,6 +287,62 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
+  balanceLabel: {
+    color: "#64748B",
+    fontSize: 12,
+    marginBottom: 6,
+  },
+  balanceUsd: { color: "#96A4B8", fontSize: 12 },
+  percentRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  percentButton: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    backgroundColor: "#2B3C52",
+    alignItems: "center",
+  },
+  percentButtonDisabled: {
+    opacity: 0.5,
+  },
+  percentButtonText: {
+    color: "#F3F5F7",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  percentButtonTextDisabled: {
+    color: "#64748B",
+  },
+  amountInput: {
+    backgroundColor: "#0B1220",
+    borderWidth: 1,
+    borderColor: "#2B3C52",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 18,
+    color: "#F3F5F7",
+    marginBottom: 6,
+  },
+  amountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  amountUnit: { color: "#96A4B8", fontSize: 14 },
+  maxButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: "#2B3C52",
+  },
+  maxButtonText: { color: "#7DD3FC", fontSize: 13, fontWeight: "600" },
+
   primaryButton: {
     backgroundColor: "#1EC98A",
     paddingVertical: 13,
@@ -245,15 +350,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   primaryButtonText: { color: "#0B1220", fontWeight: "700", fontSize: 15 },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: "#2B3C52",
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 8,
-  },
-  secondaryButtonText: { color: "#F3F5F7" },
 
   stepRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
   stepDotActive: {
@@ -278,9 +374,6 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   earningNote: { color: "#64748B", fontSize: 13 },
-
-  qrWrap: { alignItems: "center", marginTop: 16, marginBottom: 4 },
-  qrText: { color: "#96A4B8", marginTop: 10, fontSize: 13 },
 
   link: { color: "#7DD3FC", fontSize: 13 },
   error: { color: "#F86A5C", marginTop: 8, textAlign: "center" },
