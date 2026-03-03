@@ -2,7 +2,7 @@
 
 SmoothYield is an open-source reference app that shows **web2 developers** how to add passive BTC yield to a traditional finance (TradFi) mobile app — no seed phrases, no gas fees, no blockchain UX. The entire crypto layer is powered by [**Starkzap**](https://docs.starknet.io/build/starkzap/), the official Starknet developer toolkit.
 
-> **TL;DR** — Your users sign in with Google. Behind the scenes, Starkzap creates an invisible Starknet wallet, swaps USDC to LBTC, and stakes it for ~3.3% APY. All transactions are gasless (sponsored by the AVNU paymaster). Your users never see a wallet address, sign a transaction, or pay gas. They just see "Earning 3.33% APY on BTC".
+> **TL;DR** — Your users sign in with Google. Behind the scenes, Starkzap creates an invisible Starknet wallet and stakes LBTC for ~3.3% APY. All transactions are gasless (sponsored by the AVNU paymaster). Your users never see a wallet address, sign a transaction, or pay gas. They just see "Earning 3.33% APY on BTC".
 
 ---
 
@@ -18,9 +18,8 @@ SmoothYield is an open-source reference app that shows **web2 developers** how t
    - [Step 4: Create Invisible Wallets with Privy](#step-4-create-invisible-wallets-with-privy)
    - [Step 5: Onboard a Wallet into Starkzap](#step-5-onboard-a-wallet-into-starkzap)
    - [Step 6: Read Token Balances](#step-6-read-token-balances)
-   - [Step 7: Swap Tokens (USDC → LBTC)](#step-7-swap-tokens-usdc--lbtc)
-   - [Step 8: Stake LBTC for Yield](#step-8-stake-lbtc-for-yield)
-   - [Step 9: Unstake and Withdraw](#step-9-unstake-and-withdraw)
+   - [Step 7: Stake LBTC for Yield](#step-7-stake-lbtc-for-yield)
+   - [Step 8: Unstake and Withdraw](#step-8-unstake-and-withdraw)
 5. [The Paymaster: Gasless Transactions](#the-paymaster-gasless-transactions)
 6. [Project Structure](#project-structure)
 7. [Quick Start](#quick-start)
@@ -41,10 +40,10 @@ Traditional finance apps (stock brokers, neobanks, portfolio trackers) can unloc
 | **No wallet UX** | Privy creates invisible embedded wallets. Users sign in with Google/email — no MetaMask, no seed phrases. |
 | **No gas fees** | The AVNU paymaster sponsors every transaction. Your users never need to hold ETH or STRK for gas. |
 | **Real BTC yield** | LBTC staking on Starknet earns ~3.3% APY through native delegation to Starknet validators. |
-| **5 npm packages** | `starkzap` + `@privy-io/expo` + `@privy-io/node` + `@avnu/avnu-sdk` + `starknet`. That's the full crypto stack. |
+| **4 npm packages** | `starkzap` + `@privy-io/expo` + `@privy-io/node` + `starknet`. That's the full crypto stack. |
 | **Backend-only signing** | All transaction signing happens on your server. The mobile app never touches private keys. |
 
-Your users see a TradFi app with stocks, cash, and a "BTC Yield" tab. Behind the scenes, Starkzap handles wallets, swaps, staking, and gas — all in a few function calls.
+Your users see a TradFi app with stocks, cash, and a "BTC Yield" tab. Behind the scenes, Starkzap handles wallets, staking, and gas — all in a few function calls.
 
 ---
 
@@ -67,7 +66,6 @@ Your users see a TradFi app with stocks, cash, and a "BTC Yield" tab. Behind the
 │                                                                  │
 │   Auth:  Privy token verification → session                      │
 │   Wallet: Privy server SDK → create Starknet wallet              │
-│   Swap:  AVNU SDK → USDC → LBTC                                 │
 │   Stake: Starkzap Staking → delegate LBTC to validator pool      │
 │   Gas:   AVNU Paymaster → all transactions sponsored             │
 │   Sign:  Privy rawSign → server-side, no user interaction        │
@@ -80,8 +78,7 @@ Your users see a TradFi app with stocks, cash, and a "BTC Yield" tab. Behind the
 │                         Starknet                                 │
 │                                                                  │
 │   Account deployment (sponsored)                                 │
-│   ERC-20 token transfers (USDC, LBTC)                           │
-│   AVNU DEX swap (USDC → LBTC)                                   │
+│   ERC-20 token transfers (LBTC)                                  │
 │   Native staking (LBTC → validator pool → yield)                │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -123,7 +120,7 @@ Add the `starkzap` package to both your backend and frontend:
 ```bash
 # Backend
 cd backend
-npm install starkzap starknet @privy-io/node @avnu/avnu-sdk
+npm install starkzap starknet @privy-io/node
 
 # Mobile / Frontend
 cd mobile
@@ -139,7 +136,7 @@ You need three services — all have free tiers:
 | Service | What It Does | Where to Get It |
 |---------|-------------|-----------------|
 | **Privy** | User auth + embedded wallets | [dashboard.privy.io](https://dashboard.privy.io) |
-| **AVNU** | Paymaster (gas sponsorship) + DEX swaps | [portal.avnu.fi](https://portal.avnu.fi) |
+| **AVNU** | Paymaster (gas sponsorship) | [portal.avnu.fi](https://portal.avnu.fi) |
 | **Alchemy** (optional) | Starknet RPC node | [dashboard.alchemy.com](https://dashboard.alchemy.com) |
 
 Set them in your backend `.env`:
@@ -245,7 +242,7 @@ export async function createStarknetWallet(_privyUserId: string): Promise<PrivyW
 
 ### Step 5: Onboard a Wallet into Starkzap
 
-This is the central integration point. `sdk.onboard()` connects the Privy wallet to Starkzap so it can execute transactions (swaps, staking, transfers) — all server-side.
+This is the central integration point. `sdk.onboard()` connects the Privy wallet to Starkzap so it can execute transactions (staking, transfers) — all server-side.
 
 ```typescript
 const wallet = await sdk.onboard({
