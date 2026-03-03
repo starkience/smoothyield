@@ -19,10 +19,28 @@ config.resolver.nodeModulesPaths = [
 // Prefer browser-compatible builds over Node.js builds.
 config.resolver.unstable_conditionNames = ["browser", "require", "default"];
 
-// Force "jose" (used by @privy-io/js-sdk-core) to the browser build so we don't pull in
-// Node's "crypto"/"util", which are not available in React Native. Explicit path
-// resolution is more reliable than conditionNames for nested dependencies.
+// Singleton packages: force react & react-native to ALWAYS resolve from
+// mobile/node_modules so the monorepo root copy never gets loaded.
+// This prevents the "Invalid hook call" / duplicate-React error.
+const SINGLETON_PKGS = ["react", "react-native"];
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Pin react / react-native (and all subpath imports) to the mobile copy
+  for (const pkg of SINGLETON_PKGS) {
+    if (moduleName === pkg || moduleName.startsWith(pkg + "/")) {
+      try {
+        const filePath = require.resolve(moduleName, {
+          paths: [path.join(projectRoot, "node_modules")],
+        });
+        return { type: "sourceFile", filePath };
+      } catch {
+        break;
+      }
+    }
+  }
+
+  // Force "jose" (used by @privy-io/js-sdk-core) to the browser build so we don't pull in
+  // Node's "crypto"/"util", which are not available in React Native.
   if (moduleName === "jose" || moduleName.startsWith("jose/")) {
     const nodeModulesPaths = [
       path.join(projectRoot, "node_modules"),
@@ -35,6 +53,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       }
     }
   }
+
   return context.resolveRequest(context, moduleName, platform);
 };
 

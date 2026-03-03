@@ -7,6 +7,12 @@ export type StakeResult = {
   status: "submitted" | "mocked";
 };
 
+export type UnstakeResult = {
+  txHash: string;
+  explorerUrl: string;
+  status: "submitted";
+};
+
 /**
  * Stake LBTC on Starknet.
  * - If BTC_STAKING_CONTRACT_ADDRESS is set: uses a single raw invoke to that contract (legacy/custom).
@@ -89,6 +95,72 @@ export const stakeLbtc = async (wallet: any, amount: string): Promise<StakeResul
   console.log("[stakeLbtc] rawCalls from starkzap (BEFORE normalization):", JSON.stringify(rawCalls, null, 2));
 
   const tx = await sendSponsoredTx(wallet, rawCalls);
+  const hash = tx?.transaction_hash ?? tx?.hash ?? tx;
+  return {
+    txHash: String(hash),
+    explorerUrl: getExplorerUrl(String(hash)),
+    status: "submitted",
+  };
+};
+
+/**
+ * Unstake (exit intent) LBTC from a Starknet delegation pool.
+ *
+ * This initiates the exit intent — the user declares they want to withdraw `amount`.
+ * After the exit window passes they must call `exitLbtc` to finalise.
+ */
+export const unstakeLbtc = async (wallet: any, amount: string): Promise<UnstakeResult> => {
+  console.log("[unstakeLbtc] Called with amount:", amount);
+
+  const { lbtc } = await getTokenAddresses();
+  const poolAddress = await getLbtcPoolAddress();
+  if (!poolAddress) {
+    throw new Error("No LBTC staking pool found on this network.");
+  }
+
+  const starkzap = await import("starkzap");
+  const { Staking, Amount, ChainId, getStakingPreset } = starkzap;
+  const provider = getProvider();
+  const chainId = config.network === "sepolia" ? ChainId.SEPOLIA : ChainId.MAINNET;
+  const stakingConfig = getStakingPreset(chainId);
+
+  const staking = await Staking.fromPool(poolAddress as any, provider as any, stakingConfig);
+
+  const amountObj = Amount.fromRaw(String(amount), lbtc.decimals, lbtc.symbol);
+  const exitIntentCall = staking.populateExitIntent(amountObj);
+
+  const tx = await sendSponsoredTx(wallet, [exitIntentCall]);
+  const hash = tx?.transaction_hash ?? tx?.hash ?? tx;
+  return {
+    txHash: String(hash),
+    explorerUrl: getExplorerUrl(String(hash)),
+    status: "submitted",
+  };
+};
+
+/**
+ * Finalise an exit from the LBTC delegation pool after the exit window has passed.
+ */
+export const exitLbtc = async (wallet: any): Promise<UnstakeResult> => {
+  console.log("[exitLbtc] Called");
+
+  const poolAddress = await getLbtcPoolAddress();
+  if (!poolAddress) {
+    throw new Error("No LBTC staking pool found on this network.");
+  }
+
+  const starkzap = await import("starkzap");
+  const { Staking, ChainId, getStakingPreset } = starkzap;
+  const provider = getProvider();
+  const chainId = config.network === "sepolia" ? ChainId.SEPOLIA : ChainId.MAINNET;
+  const stakingConfig = getStakingPreset(chainId);
+
+  const staking = await Staking.fromPool(poolAddress as any, provider as any, stakingConfig);
+  const walletAddress = wallet?.address ?? wallet?.accountAddress ?? wallet?.account?.address;
+  if (!walletAddress) throw new Error("Wallet address unavailable");
+
+  const exitCall = staking.populateExit(walletAddress);
+  const tx = await sendSponsoredTx(wallet, [exitCall]);
   const hash = tx?.transaction_hash ?? tx?.hash ?? tx;
   return {
     txHash: String(hash),

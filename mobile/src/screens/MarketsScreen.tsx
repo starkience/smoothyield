@@ -8,8 +8,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { markets, portfolioHoldings, TRADFI_TOTAL } from "../constants";
 import { MarketRow } from "../components/MarketRow";
+import { useMarketData } from "../hooks/useMarketData";
 
 export const MarketsScreen = () => {
+  const { stocks: liveStocks } = useMarketData();
+  const displayMarkets = liveStocks.length
+    ? liveStocks.map((s) => ({ ...s, logoUrl: s.logoUrl }))
+    : markets;
   const dayGain = 284.52;
   const dayGainPct = ((dayGain / TRADFI_TOTAL) * 100).toFixed(2);
 
@@ -39,7 +44,7 @@ export const MarketsScreen = () => {
 
       {/* ── Market list ─────────────────────────────────────────────── */}
       <FlatList
-        data={markets}
+        data={displayMarkets}
         keyExtractor={(item) => item.ticker}
         renderItem={({ item }) => (
           <MarketRow
@@ -47,6 +52,7 @@ export const MarketsScreen = () => {
             name={item.name}
             price={item.price}
             changePct={item.changePct}
+            logoUrl={(item as any).logoUrl}
           />
         )}
         contentContainerStyle={styles.listContent}

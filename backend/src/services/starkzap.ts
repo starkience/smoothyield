@@ -294,8 +294,8 @@ export const deployAccountIfNeeded = async (wallet: any): Promise<
 export const getExplorerUrl = (hash: string) => {
   const base =
     config.network === "sepolia"
-      ? "https://sepolia.starkscan.co"
-      : "https://starkscan.co";
+      ? "https://sepolia.voyager.online"
+      : "https://voyager.online";
   return `${base}/tx/${hash}`;
 };
 

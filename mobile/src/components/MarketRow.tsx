@@ -1,15 +1,24 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { AssetIcon } from "./AssetIcon";
 
 export const MarketRow: React.FC<{
   ticker: string;
   name: string;
   price: number;
   changePct: number;
-}> = ({ ticker, name, price, changePct }) => {
+  logoUrl?: string;
+}> = ({ ticker, name, price, changePct, logoUrl }) => {
   const positive = changePct >= 0;
   return (
     <View style={styles.row}>
+      <AssetIcon
+        uri={logoUrl ?? `https://raw.githubusercontent.com/nvstly/icons/main/ticker_icons/${ticker}.png`}
+        fallbackLetter={ticker.slice(0, 1)}
+        fallbackColor="#1EC98A"
+        size={36}
+        style={styles.icon}
+      />
       <View style={styles.left}>
         <Text style={styles.ticker}>{ticker}</Text>
         <Text style={styles.name}>{name}</Text>
@@ -34,8 +43,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: "#1F2A3C"
+    borderBottomColor: "#1F2A3C",
   },
+  icon: { marginRight: 12 },
   left: { flex: 1 },
   ticker: { color: "#F3F5F7", fontSize: 16, fontWeight: "700" },
   name: { color: "#96A4B8", fontSize: 12, marginTop: 2 },
@@ -47,5 +57,5 @@ const styles = StyleSheet.create({
   price: { color: "#F3F5F7", fontSize: 14, fontWeight: "600" },
   change: { fontSize: 12, marginTop: 2 },
   up: { color: "#1EC98A" },
-  down: { color: "#F86A5C" }
+  down: { color: "#F86A5C" },
 });

@@ -11,6 +11,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { createApi } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { cryptoMarkets } from "../constants";
+import { useMarketData } from "../hooks/useMarketData";
+import { AssetIcon } from "../components/AssetIcon";
 import { YieldScreen } from "./YieldScreen";
 
 const DEFAULT_BTC_STAKING_APY = 3.33;
@@ -35,13 +37,17 @@ export const CryptoScreen = () => {
   const [btcStakingApy, setBtcStakingApy] = useState(DEFAULT_BTC_STAKING_APY);
   const [refreshing, setRefreshing] = useState(false);
   const [showYield, setShowYield] = useState(false);
+  const { crypto: liveMarkets, refresh: refreshMarket } = useMarketData();
 
   const loadBalances = useCallback(async () => {
     if (!sessionId) return;
     setRefreshing(true);
     try {
       const api = createApi(sessionId);
-      const res = await api.get<{ crypto?: { usdcBalance?: string; lbtcBalance?: string; btcStakingApy?: number } }>("/api/portfolio");
+      const [res] = await Promise.all([
+        api.get<{ crypto?: { usdcBalance?: string; lbtcBalance?: string; btcStakingApy?: number } }>("/api/portfolio"),
+        refreshMarket(),
+      ]);
       setBalances({
         usdc: res.crypto?.usdcBalance ?? "0",
         lbtc: res.crypto?.lbtcBalance ?? "0",
@@ -52,13 +58,15 @@ export const CryptoScreen = () => {
     } finally {
       setRefreshing(false);
     }
-  }, [sessionId]);
+  }, [sessionId, refreshMarket]);
 
   useEffect(() => {
     loadBalances();
   }, [loadBalances]);
 
-  const btcPrice = cryptoMarkets.find((m) => m.symbol === "BTC")?.price ?? 0;
+  const btcLive = liveMarkets.find((c) => c.symbol === "BTC");
+  const usdcLive = liveMarkets.find((c) => c.symbol === "USDC");
+  const btcPrice = btcLive?.price ?? cryptoMarkets.find((m) => m.symbol === "BTC")?.price ?? 0;
   const usdcUsd = (Number(balances.usdc) / 1e6) * 1;
   const lbtcUsd = (Number(balances.lbtc) / 1e8) * btcPrice;
 
@@ -91,9 +99,12 @@ export const CryptoScreen = () => {
           }
         >
           <View style={styles.assetRow}>
-            <View style={[styles.assetIcon, { backgroundColor: "#2775CA22" }]}>
-              <Text style={[styles.assetIconText, { color: "#2775CA" }]}>U</Text>
-            </View>
+            <AssetIcon
+              uri={usdcLive?.image ?? cryptoMarkets.find((m) => m.symbol === "USDC")?.image}
+              fallbackLetter="U"
+              fallbackColor="#2775CA"
+              style={styles.assetIcon}
+            />
             <View style={styles.assetLeft}>
               <Text style={styles.assetSymbol}>USDC</Text>
               <Text style={styles.assetName}>USD Coin</Text>
@@ -104,9 +115,12 @@ export const CryptoScreen = () => {
             </View>
           </View>
           <View style={styles.assetRow}>
-            <View style={[styles.assetIcon, { backgroundColor: "#F7931A22" }]}>
-              <Text style={[styles.assetIconText, { color: "#F7931A" }]}>B</Text>
-            </View>
+            <AssetIcon
+              uri={btcLive?.image ?? cryptoMarkets.find((m) => m.symbol === "BTC")?.image}
+              fallbackLetter="B"
+              fallbackColor="#F7931A"
+              style={styles.assetIcon}
+            />
             <View style={styles.assetLeft}>
               <Text style={styles.assetSymbol}>BTC (LBTC)</Text>
               <Text style={styles.assetName}>Wrapped Bitcoin</Text>
@@ -140,27 +154,32 @@ export const CryptoScreen = () => {
           contentContainerStyle={styles.scrollHalfContent}
           showsVerticalScrollIndicator={false}
         >
-          {cryptoMarkets.map((m) => (
-            <View key={m.symbol} style={styles.marketRow}>
-              <View style={[styles.assetIcon, { backgroundColor: m.iconColor + "22" }]}>
-                <Text style={[styles.assetIconText, { color: m.iconColor }]}>
-                  {m.symbol.slice(0, 1)}
-                </Text>
+          {(liveMarkets.length ? liveMarkets : cryptoMarkets).map((m) => {
+            const img = (m as any).image ?? cryptoMarkets.find((c) => c.symbol === m.symbol)?.image;
+            const color = (m as any).iconColor ?? cryptoMarkets.find((c) => c.symbol === m.symbol)?.iconColor ?? "#1EC98A";
+            return (
+              <View key={m.symbol} style={styles.marketRow}>
+                <AssetIcon
+                  uri={img}
+                  fallbackLetter={m.symbol.slice(0, 1)}
+                  fallbackColor={color}
+                  style={styles.assetIcon}
+                />
+                <View style={styles.assetLeft}>
+                  <Text style={styles.assetSymbol}>{m.symbol}</Text>
+                  <Text style={styles.assetName}>{m.name}</Text>
+                </View>
+                <View style={styles.marketRight}>
+                  <Text style={styles.marketPrice}>
+                    ${m.price >= 1000 ? m.price.toLocaleString("en-US", { maximumFractionDigits: 0 }) : m.price.toFixed(2)}
+                  </Text>
+                  <Text style={[styles.marketChange, m.changePct >= 0 ? styles.changeUp : styles.changeDown]}>
+                    {m.changePct >= 0 ? "+" : ""}{m.changePct.toFixed(2)}%
+                  </Text>
+                </View>
               </View>
-              <View style={styles.assetLeft}>
-                <Text style={styles.assetSymbol}>{m.symbol}</Text>
-                <Text style={styles.assetName}>{m.name}</Text>
-              </View>
-              <View style={styles.marketRight}>
-                <Text style={styles.marketPrice}>
-                  ${m.price >= 1000 ? m.price.toLocaleString("en-US", { maximumFractionDigits: 0 }) : m.price.toFixed(2)}
-                </Text>
-                <Text style={[styles.marketChange, m.changePct >= 0 ? styles.changeUp : styles.changeDown]}>
-                  {m.changePct >= 0 ? "+" : ""}{m.changePct.toFixed(2)}%
-                </Text>
-              </View>
-            </View>
-          ))}
+            );
+          })}
         </ScrollView>
       </View>
     </SafeAreaView>
@@ -216,7 +235,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
-  assetIconText: { fontSize: 16, fontWeight: "800" },
   assetLeft: { flex: 1 },
   assetRight: { alignItems: "flex-end" },
   assetSymbol: { color: "#F3F5F7", fontSize: 16, fontWeight: "700" },

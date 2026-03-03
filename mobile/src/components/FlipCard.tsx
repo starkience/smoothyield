@@ -1,91 +1,95 @@
 import React, { useRef, useState } from "react";
-import { Animated, TouchableOpacity, StyleSheet, ViewStyle } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableWithoutFeedback,
+  Animated,
+  Dimensions,
+  Platform,
+} from "react-native";
+import { colors, spacing } from "../theme";
 
-interface FlipCardProps {
+const { width: SCREEN_W } = Dimensions.get("window");
+const CARD_W = SCREEN_W - spacing.md * 2;
+const CARD_H = CARD_W * 0.58; // standard credit-card ratio ≈ 1.586
+
+interface Props {
   front: React.ReactNode;
   back: React.ReactNode;
-  height: number;
-  style?: ViewStyle;
 }
 
-/**
- * A card that flips 180° on tap to reveal the back face.
- * Uses opacity cross-fade at the midpoint for reliable cross-platform rendering
- * (avoids Android `backfaceVisibility` bugs).
- */
-export const FlipCard: React.FC<FlipCardProps> = ({ front, back, height, style }) => {
-  const [isFlipped, setIsFlipped] = useState(false);
-  const anim = useRef(new Animated.Value(0)).current;
+export const FlipCard: React.FC<Props> = ({ front, back }) => {
+  const flipAnim = useRef(new Animated.Value(0)).current;
+  const [flipped, setFlipped] = useState(false);
 
   const flip = () => {
-    const toValue = isFlipped ? 0 : 1;
-    Animated.spring(anim, {
-      toValue,
+    Animated.spring(flipAnim, {
+      toValue: flipped ? 0 : 1,
       friction: 8,
-      tension: 40,
+      tension: 60,
       useNativeDriver: true,
-    }).start(() => setIsFlipped((f) => !f));
+    }).start();
+    setFlipped((f) => !f);
   };
 
-  // Rotation: front 0→180, back 180→360
-  const frontRotate = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "180deg"],
+  const frontInterpolate = flipAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: ["0deg", "90deg", "180deg"],
   });
-  const backRotate = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["180deg", "360deg"],
+  const backInterpolate = flipAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: ["180deg", "270deg", "360deg"],
   });
 
-  // Opacity snaps at the midpoint so neither face bleeds through
-  const frontOpacity = anim.interpolate({
-    inputRange: [0, 0.49, 0.5, 1],
+  const frontOpacity = flipAnim.interpolate({
+    inputRange: [0, 0.5, 0.5, 1],
     outputRange: [1, 1, 0, 0],
   });
-  const backOpacity = anim.interpolate({
-    inputRange: [0, 0.49, 0.5, 1],
+  const backOpacity = flipAnim.interpolate({
+    inputRange: [0, 0.5, 0.5, 1],
     outputRange: [0, 0, 1, 1],
   });
 
   return (
-    <TouchableOpacity
-      activeOpacity={1}
-      onPress={flip}
-      style={[styles.container, { height }, style]}
-    >
-      {/* Front */}
-      <Animated.View
-        style={[
-          styles.face,
-          { transform: [{ rotateY: frontRotate }], opacity: frontOpacity },
-        ]}
-      >
-        {front}
-      </Animated.View>
+    <TouchableWithoutFeedback onPress={flip}>
+      <View style={[styles.container, { height: CARD_H }]}>
+        <Animated.View
+          style={[
+            styles.face,
+            { width: CARD_W, height: CARD_H },
+            { transform: [{ perspective: 1000 }, { rotateY: frontInterpolate }], opacity: frontOpacity },
+          ]}
+        >
+          {front}
+        </Animated.View>
 
-      {/* Back */}
-      <Animated.View
-        style={[
-          styles.face,
-          styles.faceBack,
-          { transform: [{ rotateY: backRotate }], opacity: backOpacity },
-        ]}
-      >
-        {back}
-      </Animated.View>
-    </TouchableOpacity>
+        <Animated.View
+          style={[
+            styles.face,
+            styles.back,
+            { width: CARD_W, height: CARD_H },
+            { transform: [{ perspective: 1000 }, { rotateY: backInterpolate }], opacity: backOpacity },
+          ]}
+        >
+          {back}
+        </Animated.View>
+      </View>
+    </TouchableWithoutFeedback>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    width: "100%",
+    alignSelf: "center",
+    width: CARD_W,
+    marginBottom: spacing.lg,
   },
   face: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    borderRadius: 16,
     backfaceVisibility: "hidden",
+    overflow: "hidden",
   },
-  faceBack: {
-    backfaceVisibility: "hidden",
-  },
+  back: {},
 });

@@ -10,6 +10,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { createApi } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { portfolioHoldings, TRADFI_TOTAL, cryptoMarkets } from "../constants";
+import { useMarketData } from "../hooks/useMarketData";
+import { AssetIcon } from "../components/AssetIcon";
 
 type BtcYieldPosition = {
   status: string;
@@ -52,20 +54,24 @@ export const PortfolioScreen = () => {
   const { sessionId } = useAuth();
   const [data, setData] = useState<PortfolioRes | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const { crypto: liveCrypto, refresh: refreshMarket } = useMarketData();
 
   const load = useCallback(async () => {
     if (!sessionId) return;
     setRefreshing(true);
     try {
       const api = createApi(sessionId);
-      const res = await api.get<PortfolioRes>("/api/portfolio");
+      const [res] = await Promise.all([
+        api.get<PortfolioRes>("/api/portfolio"),
+        refreshMarket(),
+      ]);
       setData(res);
     } catch {
       setData(null);
     } finally {
       setRefreshing(false);
     }
-  }, [sessionId]);
+  }, [sessionId, refreshMarket]);
 
   useEffect(() => {
     load();
@@ -81,7 +87,9 @@ export const PortfolioScreen = () => {
   const stakedRaw = yieldPos?.stakedAmountLbtc ?? "0";
   const tradfi = data?.tradfiHoldings ?? portfolioHoldings;
 
-  const btcPrice = cryptoMarkets.find((m) => m.symbol === "BTC")?.price ?? 0;
+  const btcLive = liveCrypto.find((c) => c.symbol === "BTC");
+  const usdcLive = liveCrypto.find((c) => c.symbol === "USDC");
+  const btcPrice = btcLive?.price ?? cryptoMarkets.find((m) => m.symbol === "BTC")?.price ?? 0;
   const usdcUsd = (Number(usdcBalance) / 1e6) * 1;
   const lbtcUsd = (Number(lbtcBalance) / 1e8) * btcPrice;
 
@@ -102,28 +110,62 @@ export const PortfolioScreen = () => {
           <RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#1EC98A" />
         }
       >
-        {/* Staked BTC APY card — only when user has staked */}
+        {/* ── Active Staking Position ──────────────────────────── */}
         {isEarning && (
-          <View style={styles.apyCard}>
-            <View style={styles.apyCardHeader}>
-              <View style={[styles.apyIcon, { backgroundColor: "#F7931A22" }]}>
-                <Text style={[styles.apyIconText, { color: "#F7931A" }]}>B</Text>
+          <View style={styles.stakingCard}>
+            {/* Header */}
+            <View style={styles.stakingHeader}>
+              <AssetIcon
+                uri={btcLive?.image ?? cryptoMarkets.find((m) => m.symbol === "BTC")?.image}
+                fallbackLetter="B"
+                fallbackColor="#F7931A"
+                size={44}
+                style={{ marginRight: 12 }}
+              />
+              <View style={styles.stakingHeaderText}>
+                <Text style={styles.stakingTitle}>BTC Staking</Text>
+                <View style={styles.stakingStatusRow}>
+                  <View style={styles.stakingDot} />
+                  <Text style={styles.stakingStatusText}>Earning yield</Text>
+                </View>
               </View>
-              <View style={styles.apyCardTitleWrap}>
-                <Text style={styles.apyCardTitle}>Staked BTC</Text>
-                <Text style={styles.apyCardSub}>
-                  Earning {apy}% APY on {formatLbtcShort(stakedRaw)} LBTC
+              <View style={styles.apyBadge}>
+                <Text style={styles.apyBadgeText}>{apy}% APY</Text>
+              </View>
+            </View>
+
+            {/* Staked amount */}
+            <View style={styles.stakingBody}>
+              <View style={styles.stakingStatRow}>
+                <Text style={styles.stakingStatLabel}>Staked</Text>
+                <View style={styles.stakingStatRight}>
+                  <Text style={styles.stakingStatValue}>{formatLbtcShort(stakedRaw)} LBTC</Text>
                   {stakedLbtcUsd > 0 && (
-                    <Text style={styles.apyCardUsd}> (${stakedLbtcUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</Text>
+                    <Text style={styles.stakingStatUsd}>
+                      ${stakedLbtcUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </Text>
                   )}
+                </View>
+              </View>
+
+              <View style={styles.stakingStatRow}>
+                <Text style={styles.stakingStatLabel}>Accrued (est.)</Text>
+                <Text style={styles.stakingStatValue}>${Number(accruedUsd).toFixed(2)}</Text>
+              </View>
+
+              <View style={styles.stakingStatRow}>
+                <Text style={styles.stakingStatLabel}>Est. daily</Text>
+                <Text style={styles.stakingStatValue}>
+                  ${(stakedLbtcUsd * (apy / 100) / 365).toFixed(4)}
                 </Text>
               </View>
             </View>
-            <View style={styles.apyCardRow}>
-              <Text style={styles.apyCardLabel}>Accrued (est.)</Text>
-              <Text style={styles.apyCardValue}>${Number(accruedUsd).toFixed(2)}</Text>
+
+            {/* Pool info */}
+            <View style={styles.stakingFooter}>
+              <Text style={styles.stakingPoolLabel}>Starknet Native Staking Pool</Text>
+              <Text style={styles.stakingPoolNote}>LBTC delegation pool  ·  Gasless via AVNU</Text>
             </View>
-            <Text style={styles.apyCardNote}>Powered by Starknet native staking · Gasless</Text>
           </View>
         )}
 
@@ -131,9 +173,12 @@ export const PortfolioScreen = () => {
         <Text style={styles.sectionLabel}>Crypto</Text>
         <View style={styles.card}>
           <View style={styles.assetRow}>
-            <View style={[styles.assetIcon, { backgroundColor: "#2775CA22" }]}>
-              <Text style={[styles.assetIconText, { color: "#2775CA" }]}>U</Text>
-            </View>
+            <AssetIcon
+              uri={usdcLive?.image ?? cryptoMarkets.find((m) => m.symbol === "USDC")?.image}
+              fallbackLetter="U"
+              fallbackColor="#2775CA"
+              style={styles.assetIcon}
+            />
             <View style={styles.assetLeft}>
               <Text style={styles.assetSymbol}>USDC</Text>
               <Text style={styles.assetName}>USD Coin</Text>
@@ -144,9 +189,12 @@ export const PortfolioScreen = () => {
             </View>
           </View>
           <View style={styles.assetRow}>
-            <View style={[styles.assetIcon, { backgroundColor: "#F7931A22" }]}>
-              <Text style={[styles.assetIconText, { color: "#F7931A" }]}>B</Text>
-            </View>
+            <AssetIcon
+              uri={btcLive?.image ?? cryptoMarkets.find((m) => m.symbol === "BTC")?.image}
+              fallbackLetter="B"
+              fallbackColor="#F7931A"
+              style={styles.assetIcon}
+            />
             <View style={styles.assetLeft}>
               <Text style={styles.assetSymbol}>BTC (LBTC)</Text>
               <Text style={styles.assetName}>Wrapped Bitcoin</Text>
@@ -163,11 +211,12 @@ export const PortfolioScreen = () => {
         <View style={styles.card}>
           {tradfi.map((h) => (
             <View key={h.ticker} style={styles.assetRow}>
-              <View style={[styles.assetIcon, { backgroundColor: "#1EC98A22" }]}>
-                <Text style={[styles.assetIconText, { color: "#1EC98A" }]}>
-                  {h.ticker.slice(0, 1)}
-                </Text>
-              </View>
+              <AssetIcon
+                uri={(h as any).logoUrl ?? `https://raw.githubusercontent.com/nvstly/icons/main/ticker_icons/${h.ticker}.png`}
+                fallbackLetter={h.ticker.slice(0, 1)}
+                fallbackColor="#1EC98A"
+                style={styles.assetIcon}
+              />
               <View style={styles.assetLeft}>
                 <Text style={styles.assetSymbol}>{h.ticker}</Text>
                 <Text style={styles.assetName}>{h.name}</Text>
@@ -233,7 +282,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
-  assetIconText: { fontSize: 16, fontWeight: "800" },
   assetLeft: { flex: 1 },
   assetRight: { alignItems: "flex-end" },
   assetSymbol: { color: "#F3F5F7", fontSize: 16, fontWeight: "700" },
@@ -241,39 +289,63 @@ const styles = StyleSheet.create({
   assetBalance: { color: "#F3F5F7", fontSize: 15, fontWeight: "600" },
   assetUsd: { color: "#64748B", fontSize: 12, marginTop: 2 },
 
-  apyCard: {
+  // ── Staking position card ──────────────────────────────────────────────────
+  stakingCard: {
     backgroundColor: "#0F2D1E",
     borderWidth: 1,
     borderColor: "#1EC98A44",
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
     marginTop: 8,
+    overflow: "hidden",
   },
-  apyCardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
-  apyIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  stakingHeader: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
+    padding: 16,
+    paddingBottom: 14,
   },
-  apyIconText: { fontSize: 18, fontWeight: "800" },
-  apyCardTitleWrap: { flex: 1 },
-  apyCardTitle: { color: "#1EC98A", fontWeight: "700", fontSize: 16 },
-  apyCardSub: { color: "#96A4B8", fontSize: 13, marginTop: 2 },
-  apyCardUsd: { color: "#64748B", fontSize: 12 },
-  apyCardRow: {
+  stakingHeaderText: { flex: 1 },
+  stakingTitle: { color: "#F3F5F7", fontWeight: "700", fontSize: 16 },
+  stakingStatusRow: { flexDirection: "row", alignItems: "center", marginTop: 3 },
+  stakingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#1EC98A",
+    marginRight: 6,
+  },
+  stakingStatusText: { color: "#1EC98A", fontSize: 12, fontWeight: "600" },
+  apyBadge: {
+    backgroundColor: "#1EC98A22",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  apyBadgeText: { color: "#1EC98A", fontSize: 13, fontWeight: "700" },
+  stakingBody: {
+    borderTopWidth: 1,
+    borderTopColor: "#1A3D2C",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  stakingStatRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#1F2A3C",
+    paddingVertical: 7,
   },
-  apyCardLabel: { color: "#64748B", fontSize: 13 },
-  apyCardValue: { color: "#F3F5F7", fontSize: 15, fontWeight: "600" },
-  apyCardNote: { color: "#64748B", fontSize: 11, marginTop: 8 },
+  stakingStatLabel: { color: "#64748B", fontSize: 13 },
+  stakingStatRight: { alignItems: "flex-end" },
+  stakingStatValue: { color: "#F3F5F7", fontSize: 14, fontWeight: "600" },
+  stakingStatUsd: { color: "#64748B", fontSize: 11, marginTop: 1 },
+  stakingFooter: {
+    borderTopWidth: 1,
+    borderTopColor: "#1A3D2C",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  stakingPoolLabel: { color: "#96A4B8", fontSize: 12, fontWeight: "600" },
+  stakingPoolNote: { color: "#4A5568", fontSize: 11, marginTop: 2 },
 
   tradfiTotalRow: {
     flexDirection: "row",

@@ -17,7 +17,7 @@ app.listen(config.port, () => {
   if (config.privyAppId && config.privyAppSecret) {
     const id = config.privyAppId;
     const masked = id.length >= 16 ? `${id.slice(0, 8)}…${id.slice(-8)}` : "***";
-    console.log(`Privy: app ID ${masked}. To fix "Invalid JWT" on stake: enable "Server-side access" at https://dashboard.privy.io/apps?page=embedded&tab=advanced (see backend/PRIVY_WALLET_400.md).`);
+    console.log(`Privy: app ID ${masked}. Wallets are server-managed (no user JWT needed for rawSign).`);
     if (config.privyJwksUrl) {
       console.log(`Privy: JWKS verification enabled (${config.privyJwksUrl})`);
     }

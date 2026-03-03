@@ -20,6 +20,7 @@ const config: ExpoConfig = {
   android: {
     package: "com.smoothyield.app"
   },
+  plugins: ["expo-router", "expo-font"],
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL || "http://localhost:3001",
     privyAppId: process.env.EXPO_PUBLIC_PRIVY_APP_ID || "cmm3npboo05370cjr7kp9sbg6",

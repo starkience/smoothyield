@@ -13,7 +13,9 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLoginWithEmail } from "@privy-io/expo";
 import { useAuth } from "../context/AuthContext";
-import { DEFAULT_BTC_STAKING_APY } from "../constants";
+import { colors, spacing } from "../theme";
+
+const BTC_APY = "3.33";
 
 export const LoginScreen = () => {
   const { loginWithGoogle, loading } = useAuth();
@@ -60,11 +62,11 @@ export const LoginScreen = () => {
           {/* ── Brand ─────────────────────────────────────────────── */}
           <View style={styles.brand}>
             <View style={styles.logoCircle}>
-              <Text style={styles.logoIcon}>₿</Text>
+              <Text style={styles.logoIcon}>S</Text>
             </View>
             <Text style={styles.appName}>SmoothYield</Text>
             <Text style={styles.tagline}>
-              Your TradFi portfolio.{"\n"}With Bitcoin yield on top.
+              Your brokerage account.{"\n"}Stocks, crypto & BTC yield.
             </Text>
           </View>
 
@@ -72,8 +74,8 @@ export const LoginScreen = () => {
           <View style={styles.bullets}>
             {[
               { icon: "📈", text: "Track your stocks & ETFs" },
-              { icon: "₿",  text: "Hold BTC, ETH, SOL" },
-              { icon: "⚡", text: `Earn ${DEFAULT_BTC_STAKING_APY}% APY on BTC · gasless` },
+              { icon: "₿", text: "Hold BTC, ETH, SOL & more" },
+              { icon: "⚡", text: `Earn ${BTC_APY}% APY on BTC` },
             ].map((b) => (
               <View key={b.text} style={styles.bulletRow}>
                 <Text style={styles.bulletIcon}>{b.icon}</Text>
@@ -85,13 +87,11 @@ export const LoginScreen = () => {
           {/* ── CTA ───────────────────────────────────────────────── */}
           <View style={styles.cta}>
             {loading ? (
-              <ActivityIndicator color="#1EC98A" size="large" style={{ marginBottom: 24 }} />
+              <ActivityIndicator color={colors.text} size="large" style={{ marginBottom: 24 }} />
             ) : (
               <>
-                {/* Email OTP — show as form or code entry */}
                 {!showEmail && !codeSent ? (
                   <>
-                    {/* Email + Google as equal primary options */}
                     <TouchableOpacity
                       style={styles.primaryButton}
                       onPress={() => setShowEmail(true)}
@@ -99,12 +99,14 @@ export const LoginScreen = () => {
                     >
                       <Text style={styles.primaryButtonText}>Continue with email</Text>
                     </TouchableOpacity>
-                    <Text style={styles.emailHint}>We’ll send a 6-digit code to your inbox</Text>
+                    <Text style={styles.emailHint}>We'll send a 6-digit code to your inbox</Text>
+
                     <View style={styles.dividerRow}>
                       <View style={styles.dividerLine} />
                       <Text style={styles.dividerText}>or</Text>
                       <View style={styles.dividerLine} />
                     </View>
+
                     <TouchableOpacity
                       style={styles.googleButton}
                       onPress={loginWithGoogle}
@@ -114,13 +116,12 @@ export const LoginScreen = () => {
                     </TouchableOpacity>
                   </>
                 ) : codeSent ? (
-                  /* code entry */
                   <View style={styles.otpWrap}>
                     <Text style={styles.otpHint}>Enter the 6-digit code sent to {email}</Text>
                     <TextInput
                       style={styles.input}
                       placeholder="000000"
-                      placeholderTextColor="#4A5568"
+                      placeholderTextColor={colors.textTertiary}
                       keyboardType="number-pad"
                       value={code}
                       onChangeText={setCode}
@@ -133,27 +134,23 @@ export const LoginScreen = () => {
                       disabled={emailBusy}
                     >
                       {emailBusy
-                        ? <ActivityIndicator color="#0B1220" />
+                        ? <ActivityIndicator color={colors.primaryText} />
                         : <Text style={styles.primaryButtonText}>Verify code</Text>}
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={styles.emailToggle}
-                      onPress={() => {
-                        setShowEmail(false);
-                        setCode("");
-                      }}
+                      style={styles.linkButton}
+                      onPress={() => { setShowEmail(false); setCode(""); }}
                     >
-                      <Text style={styles.emailToggleText}>Use a different email</Text>
+                      <Text style={styles.linkText}>Use a different email</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  /* email entry */
                   <View style={styles.otpWrap}>
-                    <Text style={styles.otpHint}>We’ll send a one-time code to this address</Text>
+                    <Text style={styles.otpHint}>We'll send a one-time code to this address</Text>
                     <TextInput
                       style={styles.input}
                       placeholder="your@email.com"
-                      placeholderTextColor="#4A5568"
+                      placeholderTextColor={colors.textTertiary}
                       keyboardType="email-address"
                       autoCapitalize="none"
                       value={email}
@@ -166,24 +163,22 @@ export const LoginScreen = () => {
                       disabled={emailBusy}
                     >
                       {emailBusy
-                        ? <ActivityIndicator color="#0B1220" />
+                        ? <ActivityIndicator color={colors.primaryText} />
                         : <Text style={styles.primaryButtonText}>Send code</Text>}
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={styles.emailToggle}
+                      style={styles.linkButton}
                       onPress={() => setShowEmail(false)}
                     >
-                      <Text style={styles.emailToggleText}>Back</Text>
+                      <Text style={styles.linkText}>Back</Text>
                     </TouchableOpacity>
                   </View>
                 )}
               </>
             )}
 
-            {emailError && (
-              <Text style={styles.errorText}>{emailError}</Text>
-            )}
-            <Text style={styles.hint}>No wallet setup required.</Text>
+            {emailError && <Text style={styles.errorText}>{emailError}</Text>}
+            <Text style={styles.hint}>No seed phrases. No gas fees.</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -192,7 +187,7 @@ export const LoginScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0B1220" },
+  safe: { flex: 1, backgroundColor: colors.background },
   kav: { flex: 1 },
   container: {
     flexGrow: 1,
@@ -207,69 +202,110 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: "#1EC98A22",
+    backgroundColor: colors.card,
     borderWidth: 2,
-    borderColor: "#1EC98A",
+    borderColor: colors.text,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
   },
-  logoIcon: { fontSize: 32, color: "#1EC98A" },
-  appName: { color: "#F3F5F7", fontSize: 30, fontWeight: "800", marginBottom: 8 },
-  tagline: { color: "#64748B", fontSize: 15, textAlign: "center", lineHeight: 22 },
+  logoIcon: { fontSize: 30, fontWeight: "800", color: colors.text },
+  appName: {
+    color: colors.text,
+    fontSize: 30,
+    fontWeight: "800",
+    marginBottom: 8,
+  },
+  tagline: {
+    color: colors.textSecondary,
+    fontSize: 15,
+    textAlign: "center",
+    lineHeight: 22,
+  },
 
   bullets: {
-    backgroundColor: "#121B2E",
+    backgroundColor: colors.card,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
     padding: 20,
     gap: 14,
   },
   bulletRow: { flexDirection: "row", alignItems: "center" },
   bulletIcon: { fontSize: 20, width: 34 },
-  bulletText: { color: "#96A4B8", fontSize: 14, flex: 1 },
+  bulletText: { color: colors.text, fontSize: 14, flex: 1 },
 
   cta: { alignItems: "center" },
 
-  googleButton: {
-    backgroundColor: "#FFFFFF",
+  primaryButton: {
+    backgroundColor: colors.primary,
     width: "100%",
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
+  },
+  buttonDisabled: { opacity: 0.4 },
+  primaryButtonText: { color: colors.primaryText, fontWeight: "700", fontSize: 15 },
+
+  googleButton: {
+    backgroundColor: colors.background,
+    width: "100%",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: colors.text,
+  },
+  googleButtonText: { color: colors.text, fontWeight: "700", fontSize: 15 },
+
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    width: "100%",
     marginBottom: 16,
   },
-  googleButtonText: { color: "#1A1A1A", fontWeight: "700", fontSize: 15 },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.divider },
+  dividerText: { color: colors.textTertiary, paddingHorizontal: 12, fontSize: 13 },
 
-  dividerRow: { flexDirection: "row", alignItems: "center", width: "100%", marginBottom: 16 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: "#1F2A3C" },
-  dividerText: { color: "#4A5568", paddingHorizontal: 12, fontSize: 13 },
-
-  emailToggle: { width: "100%", alignItems: "center", paddingVertical: 12 },
-  emailToggleText: { color: "#1EC98A", fontSize: 15, fontWeight: "600" },
+  emailHint: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 4,
+    marginBottom: 8,
+  },
 
   otpWrap: { width: "100%", gap: 10, marginBottom: 8 },
-  otpHint: { color: "#64748B", fontSize: 13, textAlign: "center", marginBottom: 4 },
+  otpHint: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    textAlign: "center",
+    marginBottom: 4,
+  },
   input: {
-    backgroundColor: "#121B2E",
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: "#1F2A3C",
+    borderColor: colors.divider,
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 13,
-    color: "#F3F5F7",
+    color: colors.text,
     fontSize: 15,
   },
-  primaryButton: {
-    backgroundColor: "#1EC98A",
-    width: "100%",
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  buttonDisabled: { opacity: 0.5 },
-  primaryButtonText: { color: "#0B1220", fontWeight: "800", fontSize: 15 },
 
-  emailHint: { color: "#64748B", fontSize: 12, textAlign: "center", marginTop: 4, marginBottom: 8 },
-  hint: { color: "#4A5568", fontSize: 12, textAlign: "center", marginTop: 16 },
-  errorText: { color: "#FF6B6B", fontSize: 13, textAlign: "center", marginTop: 8 },
+  linkButton: { width: "100%", alignItems: "center", paddingVertical: 12 },
+  linkText: { color: colors.text, fontSize: 15, fontWeight: "600" },
+
+  hint: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 16,
+  },
+  errorText: {
+    color: colors.danger,
+    fontSize: 13,
+    textAlign: "center",
+    marginTop: 8,
+  },
 });

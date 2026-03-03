@@ -1,5 +1,47 @@
 # Fix: 400 "Invalid JWT token provided" on wallet sign
 
+**Important (from Privy support):**  
+`/v1/wallets/authenticate` **only accepts custom JWTs from your own auth provider**, not the Privy access token from `getAccessToken()`. So if you use **Privy OAuth only** (e.g. Google login via Privy), the token you have is a Privy-issued token and will always get 400 from the wallet API.
+
+**Your options:**
+
+1. **Custom JWT flow (recommended)** — This backend can act as the auth provider: it issues a short-lived JWT after verifying the user (e.g. via Privy token). See **Setup: Custom JWT (this backend)** below.
+2. **Client-side signing only** — Don't call `rawSign` from the server. Have the app sign the hash with the embedded wallet (client-side) and send the signature to the backend; backend submits the transaction.
+3. **Ask Privy** — Confirm whether server-side `rawSign` for Starknet is supported when the only token you have is the Privy access token (Privy OAuth, no custom auth provider).
+
+---
+
+## Setup: Custom JWT (this backend)
+
+When `JWT_SIGN_PRIVATE_KEY_PEM` is set, the backend issues its own JWT for wallet sign and exposes a JWKS endpoint. Configure Privy to accept that JWT.
+
+### 1. Generate a key and set env
+
+```bash
+openssl genpkey -algorithm RSA -out priv.pem -pkeyopt rsa_keygen_bits:2048
+# Use the contents of priv.pem in .env as JWT_SIGN_PRIVATE_KEY_PEM (use \n for newlines in one line)
+```
+
+In `backend/.env`: Set `JWT_SIGN_PRIVATE_KEY_PEM` to the full PEM string. Optionally set `JWT_ISSUER` (defaults to `BACKEND_BASE_URL`) and `JWT_SIGN_KEY_ID` (default `sig-1`).
+
+### 2. JWKS URL
+
+**GET /api/auth/jwks** returns the public key(s). Use a publicly reachable URL in Privy (e.g. `https://your-api.example/api/auth/jwks`). For local dev use a tunnel (ngrok) so Privy can fetch it.
+
+### 3. Privy dashboard — JWT-based authentication
+
+- **User management → Authentication** → enable **JWT-based authentication**, **Server side**.
+- **JWKS endpoint:** Your backend URL, e.g. `https://your-api.example/api/auth/jwks`
+- **JWT user ID claim:** `sub`
+- **JWT additional claims:** `iss` = your backend issuer (same as `JWT_ISSUER` / `BACKEND_BASE_URL`); `aud` = your Privy App ID.
+- **JWT aud claim (optional):** Your Privy App ID.
+
+### 4. Restart backend and retry
+
+Restart the backend; then retry Stake. The backend will pass the backend-issued JWT to `rawSign` instead of the Privy access token.
+
+---
+
 **Backend follows [Starkzap connecting wallets](https://docs.starknet.io/build/starkzap/connecting-wallets) and [Starkzap Privy integration](https://docs.starknet.io/build/starkzap/integrations/privy):**  
 `POST /api/wallet/starknet` (Bearer token → `{ wallet: { id, address, publicKey } }`) and `POST /api/wallet/sign` (body `{ walletId, hash }` → `{ signature }`).
 
