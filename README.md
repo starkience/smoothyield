@@ -347,47 +347,7 @@ export const getTokenAddresses = async (): Promise<{
 };
 ```
 
-### Step 7: Swap Tokens (USDC → LBTC)
-
-Use the AVNU SDK to build a swap, then execute it gaslessly through the Starkzap wallet:
-
-```typescript
-import { fetchQuotes, fetchBuildExecuteTransaction, buildApproveTx } from "@avnu/avnu-sdk";
-
-// 1. Get a swap quote
-const quotes = await fetchQuotes({
-  sellTokenAddress: tokens.USDC.address,
-  buyTokenAddress: tokens.LBTC.address,
-  sellAmount: BigInt("1000000"),              // 1 USDC
-  takerAddress: walletAddress,
-});
-
-// 2. Build the execute transaction
-const executeTx = await fetchBuildExecuteTransaction(quotes[0].quoteId, ...);
-
-// 3. Build the ERC-20 approval
-const approveTx = buildApproveTx(quotes[0].sellTokenAddress, quotes[0].sellAmount, ...);
-
-// 4. Execute gaslessly through Starkzap wallet
-const tx = await wallet.execute(
-  [approveTx, executeTx],
-  { feeMode: "sponsored" }      // paymaster pays the gas
-);
-```
-
-In SmoothYield, this is the `POST /api/yield/convert` endpoint. The swap logic lives in `backend/src/services/avnu.ts`, and execution uses `sendSponsoredTx()`:
-
-```237:268:backend/src/services/starkzap.ts
-export const sendSponsoredTx = async (wallet: any, calls: any[]) => {
-  // ... flatten and normalize calls for paymaster compatibility ...
-  const normalized = normalizeCallsForPaymaster(flatInput);
-  // ...
-  const tx = await wallet.execute(toExecute, { feeMode: "sponsored" });
-  return tx;
-};
-```
-
-### Step 8: Stake LBTC for Yield
+### Step 7: Stake LBTC for Yield
 
 This is where the real magic happens. Starkzap's `Staking` module lets you stake LBTC in a validator's delegation pool to earn yield — all in a few lines.
 
@@ -447,7 +407,7 @@ In SmoothYield, the full staking flow is in `backend/src/adapters/staking.ts`:
   // ...
 ```
 
-### Step 9: Unstake and Withdraw
+### Step 8: Unstake and Withdraw
 
 Starknet staking has a two-phase exit: first declare intent, then withdraw after the cooldown.
 
@@ -479,7 +439,6 @@ The AVNU paymaster is what makes this app feel like a traditional fintech app. W
 
 **What's sponsored:**
 - Account deployment (`wallet.deploy({ feeMode: "sponsored" })`)
-- Token swaps (USDC → LBTC)
 - Staking deposits and withdrawals
 - Any multicall transaction
 
@@ -503,8 +462,7 @@ smoothyield/
 │   │   ├── services/
 │   │   │   ├── starkzap.ts          # Starkzap SDK init, onboard, balances, sponsored tx
 │   │   │   ├── privyWallet.ts       # Privy wallet creation + rawSign
-│   │   │   ├── privy.ts             # Privy token verification
-│   │   │   └── avnu.ts              # AVNU swap (USDC → LBTC)
+│   │   │   └── privy.ts             # Privy token verification
 │   │   ├── adapters/
 │   │   │   └── staking.ts           # Starkzap Staking: stake, unstake, exit
 │   │   ├── routes/index.ts          # All API endpoints
@@ -606,7 +564,6 @@ Set `DEV_MODE=true` in `backend/.env` to mock auth/staking for local testing wit
 | `GET` | `/api/wallet/address` | Session | Get wallet address |
 | `POST` | `/api/wallet/deploy` | Session | Deploy account on-chain (sponsored) |
 | `GET` | `/api/portfolio` | Session | TradFi + crypto balances + yield state |
-| `POST` | `/api/yield/convert` | Session | Swap USDC → LBTC via AVNU |
 | `POST` | `/api/yield/stake` | Session | Stake LBTC for yield |
 | `POST` | `/api/yield/unstake` | Session | Exit intent (begin unstaking) |
 | `POST` | `/api/yield/exit` | Session | Finalize withdrawal after cooldown |
@@ -660,7 +617,7 @@ The app uses `EXPO_PUBLIC_API_URL` from your `.env`. Common issues:
 
 ### "AVNU_PAYMASTER_API_KEY is required"
 
-All DeFi operations (swap, stake, deploy) require the paymaster. Get a free key from [portal.avnu.fi](https://portal.avnu.fi).
+All DeFi operations (stake, deploy) require the paymaster. Get a free key from [portal.avnu.fi](https://portal.avnu.fi).
 
 ### "No LBTC staking pool found"
 
